@@ -1,28 +1,19 @@
-// Copyright 2020-2021 Federica Filippini
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 #include "random_greedy.hpp"
 
-Random_greedy::Random_greedy (const std::string& directory, 
-                              const std::string& file_jobs, 
-                              const std::string& file_times, 
-                              const std::string& file_nodes):
-  Greedy(directory, file_jobs, file_times, file_nodes)
-{}
+template <typename COMP>
+Random_greedy<COMP>::Random_greedy (const System& s, const obj_function_t& pf,
+                                    unsigned l, unsigned seed):
+  Heuristic<COMP>(s, pf, l)
+{
+  generator.seed(seed);
+}
 
+template <typename COMP>
 void
-Random_greedy::random_swap (void)
+Random_greedy<COMP>::random_swap (void)
 {
   // random swap
+  std::list<Job>& submitted_jobs = this->system.get_submittedJobs();
   std::bernoulli_distribution distribution; // TODO: set p
   std::list<Job>::iterator it = submitted_jobs.begin();
   for (unsigned idx = 0; idx < submitted_jobs.size(); ++idx)
@@ -38,9 +29,9 @@ Random_greedy::random_swap (void)
       std::swap(*current_it, *it);
   }
 
-  if (verbose > 1)
+  if (this->verbose > 1)
   {
-    std::string base = prepare_logging();
+    std::string base = prepare_logging(this->level);
     std::cout << base << "\tlist of jobs after swap: ";
     for (const Job& j : submitted_jobs)
       std::cout << j.get_ID() << "; ";
@@ -48,273 +39,152 @@ Random_greedy::random_swap (void)
   }
 }
 
-unsigned
-Random_greedy::select_best_node (const Setup& best_stp)
-{
-  // map of opened nodes, sorted by the level of saturation
-  std::multimap<unsigned, unsigned> sorted_nodes;
-  unsigned best_idx = last_node_idx;
-
-  for (unsigned idx = 0; idx < last_node_idx; ++idx)
-  {
-    const Node& node = nodes[idx];
-
-    // compute the difference between the number of idle GPUs on the 
-    // current node and the number of required GPUs
-    int current_diff = node.get_remainingGPUs() - best_stp.get_nGPUs();
-
-    // if the best setup fits the current node, insert the pair in the map
-    if (compare_configuration(best_stp, node) && current_diff >= 0)
-      sorted_nodes.insert({current_diff, idx});
-  }
-
-  // select the best index
-  if (sorted_nodes.size() > 0)
-    best_idx = random_select(sorted_nodes, generator, beta);
-
-  return best_idx;
-}
-
+template <typename COMP>
 bool
-Random_greedy::assign_to_suboptimal (const Job& j, const setup_time_t& tjvg,
-                                     Dstar& dstar, 
-                                     job_schedule_t& new_schedule)
+Random_greedy<COMP>::assign_to_suboptimal (const Job& j, 
+                                           const setup_time_t& tjvg,
+                                           Optimal_configurations& optConfig, 
+                                           job_schedule_t& new_schedule)
 {
   std::string base = "";
   bool assigned = false;
-  while (!dstar.is_end() && !assigned)
+  while (!optConfig.is_end() && !assigned)
   {
-    dstar.set_generator(generator);
-    setup_time_t::const_iterator best_stp = dstar.get_best_setup();
-    generator = dstar.get_generator();
+    // get best setup
+    optConfig.set_generator(generator);
+    setup_time_t::const_iterator best_stp = optConfig.get_best_setup();
+    generator = optConfig.get_generator();
 
-    if (verbose > 1)
+    if (this->verbose > 1)
     {
-      base = prepare_logging();
-      std::cout << base << "\tnew best setup: (" 
-                << (best_stp->first).get_VMtype() << ", " 
-                << (best_stp->first).get_maxnGPUs() << ")" << std::endl;
+      base = prepare_logging(this->level);
+      std::cout << base << "\t\tnext selected setup: (" 
+                << std::get<0>(best_stp->first) << ", "
+                << std::get<0>(best_stp->first) << ", " 
+                << std::get<2>(best_stp->first) << ")" << std::endl;
     }
 
-    assigned = assign_to_existing_node(j, best_stp, new_schedule);
+    // assign
+    assigned = this->assign(j, best_stp, new_schedule);
 
-    if (verbose > 1 && assigned)
-      std::cout << base << "\t\t---> ASSIGNED" << std::endl;
+    if (this->verbose > 1 && assigned)
+      std::cout << base << "\t\t\t---> ASSIGNED" << std::endl;
   }
   return assigned;
 }
 
-void
-Random_greedy::perform_assignment (const Job& j, job_schedule_t& new_schedule)
+template <typename COMP>
+bool
+Random_greedy<COMP>::perform_assignment (const Job& j, 
+                                         job_schedule_t& new_schedule)
 {
   std::string base = "";
 
   // determine the setups s.t. deadline is matched
-  const setup_time_t& tjvg = ttime.at(j.get_ID());
-  Dstar dstar(j, tjvg, current_time);
-  dstar.set_random_parameter(alpha);
+  time_table_ptr ttime = this->system.get_ttime();
+  const setup_time_t& tjvg = ttime->at(j.get_ID());
+  Optimal_configurations optConfig(j, tjvg, this->system.get_GPUcosts(), this->current_time);
+  optConfig.set_random_parameter(alpha);
 
   // determine the best setup:
   //   if it is possible to match deadline, the best setup is the 
   //   cheapest; otherwise, the best setup is the fastest
-  dstar.set_generator(generator);
-  setup_time_t::const_iterator best_stp = dstar.get_best_setup();
-  generator = dstar.get_generator();
+  setup_time_t::const_iterator best_stp;
+  optConfig.set_generator(generator);
+  best_stp = optConfig.get_best_setup();
+  generator = optConfig.get_generator();
 
-  if (verbose > 1)
+  if (this->verbose > 1)
   {
-    base = prepare_logging();
-    std::cout << base << "\tfirst selected setup: (" 
-              << (best_stp->first).get_VMtype() << ", " 
-              << (best_stp->first).get_maxnGPUs() << ")" << std::endl;
+    base = prepare_logging(this->level);
+    std::cout << base << "\t\tfirst selected setup: (" 
+              << std::get<0>(best_stp->first) << ", "
+              << std::get<1>(best_stp->first) << ", "
+              << std::get<2>(best_stp->first) << ")" << std::endl; 
   }
 
-  // check the already opened nodes...
-  bool assigned = assign_to_existing_node(j, best_stp, new_schedule);
+  // assign to the required node
+  bool assigned = this->assign(j, best_stp, new_schedule);
 
-  // if the already opened nodes are not suitable...
+  // if the assignment was not feasible, assign to an available suboptimal 
+  // configuration
   if (! assigned)
-  {
-    // if it is possible, open a new node with the optimal configuration
-    // else, assign to an available suboptimal configuration
-    if (last_node_idx < nodes.size())
-    { 
-      assigned = true;
-      assign_to_new_node(j, best_stp, new_schedule);
-    }
-    else
-      assigned = assign_to_suboptimal(j, tjvg, dstar, new_schedule);
-  }
+    assigned = assign_to_suboptimal(j, tjvg, optConfig, new_schedule);
   else
-    if (verbose > 1)
-      std::cout << base << "\t\t---> ASSIGNED" << std::endl;
+    if (this->verbose > 1)
+      std::cout << base << "\t\t\t---> ASSIGNED" << std::endl;
 
   // if job j cannot be assigned to any configuration, add an empty 
   // schedule
   if (!assigned)
-    new_schedule[j] = Schedule(); 
+    new_schedule[j] = Schedule();
+
+  return assigned;
 }
 
-job_schedule_t 
-Random_greedy::perform_scheduling (void)
+template <typename COMP>
+void
+Random_greedy<COMP>::perform_scheduling (double ct, 
+                                         Elite_solutions<COMP>& ES, 
+                                         unsigned K, unsigned v)
 {
-  K_best.clear();
+  // print info
+  this->verbose = v;
+  std::string base = "";
+  if (this->verbose > 0)
+  {
+    base = prepare_logging(this->level);
+    std::cout << base << "--- perform scheduling." << std::endl;
+  }
 
-  // (STEP #0)
-  preprocessing();
+  // set number of random iterations
+  unsigned N = this->system.get_n_nodes();
+  unsigned J = this->system.get_submittedJobs().size();
+  unsigned G = this->system.get_GPUcosts()->get_total_n_GPUs();
+  max_random_iter = std::min(max_random_iter, N * J * G);
 
-  // initialization of minimum total cost, best schedule and corresponding
-  // index by a step of pure greedy
-  job_schedule_t full_greedy_schedule;
-  Greedy::scheduling_step(full_greedy_schedule);
-  update_best_schedule(full_greedy_schedule);
-
-  #ifdef SMALL_SYSTEM
-  // print full greedy cost
-    std::cout << "\n## cost of full greedy schedule = " << K_best.cbegin()->first
-              << "\n" << std::endl;
-  #endif
+  // update current time
+  this->current_time = ct;
 
   // random iterations
   for (unsigned random_iter = 1; random_iter < max_random_iter; 
        ++random_iter)
   {
     // reduce verbosity level to 1 at most
-    unsigned original_verbosity_level = verbose;
-    verbose = (verbose > 1) ? 1 : verbose;
+    unsigned original_verbosity_level = this->verbose;
+    this->verbose = (this->verbose > 1) ? 1 : this->verbose;
+
+    // sort and swap list of submitted jobs
+    if (r_swap)
+    {
+      this->sort_jobs_list();
+      random_swap();
+    }
     
+    // close currently open nodes
+    this->system.close_nodes();
+
     // determine new schedule
     job_schedule_t new_schedule;
-    scheduling_step(new_schedule);
+    unsigned n_assigned_jobs = this->scheduling_step(new_schedule);
 
     // restore verbosity level
-    if (verbose < original_verbosity_level)
-      verbose = original_verbosity_level;
+    if (this->verbose < original_verbosity_level)
+      this->verbose = original_verbosity_level;
 
-    // update best schedule
-    update_best_schedule(new_schedule);
+    // update the map of elite solutions if at least one job has been assigned
+    if (n_assigned_jobs > 0)
+      this->update_elite_solutions(new_schedule, ES.get_solutions(), K);
   }
 
-  #ifdef SMALL_SYSTEM
-    // print minimum cost after random iterations
-    std::cout << "\n## best cost = " << K_best.cbegin()->first << std::endl;
-  #endif
-
-  // get best solution
-  Best_solution& BS = K_best.begin()->second;
-  job_schedule_t BS_sch = BS.get_schedule();
-  std::swap(nodes,BS.get_open_nodes());
-  last_node_idx = BS.get_last_node_idx();
-
-  return BS_sch;
+  // print best cost after random iterations
+  std::cout << "\n## best cost = " << ES.get_solutions().cbegin()->first 
+            << "\n" << std::endl;
 }
 
-void
-Random_greedy::scheduling_step (job_schedule_t& new_schedule)
-{
-  std::string base = "";
-  if (verbose > 0)
-  {
-    base = prepare_logging();
-    std::cout << base << "--- scheduling step." << std::endl;
-  }
-  
-  // sort and swap list of submitted jobs
-  if (r_swap)
-  {
-    sort_jobs_list();
-    random_swap();
-  }
-  
-  // close currently open nodes
-  close_nodes();
 
-  // perform assignment of all submitted jobs (STEP #1) until resources are
-  // available
-  std::string queue = "";
-  bool resources = true;
-  for (const Job& j : submitted_jobs)
-  {
-    queue += (j.get_ID() + "; ");
-    if (verbose > 1)
-      std::cout << base << "\tanalyzing job..." << j.get_ID() << std::endl;
-    if (resources)
-    {
-      perform_assignment(j, new_schedule);
-      resources = available_resources();  
-    }
-    else
-      new_schedule[j] = Schedule();
-  }
-
-  if (verbose > 0)
-    std::cout << base << "\tn_submitted_jobs: " << submitted_jobs.size()
-              << "; queue: " << queue
-              << "; n_used_nodes: " << last_node_idx << std::endl;
-
-  // perform postprocessing (STEP #2)
-  postprocessing(new_schedule);
-}
-
-void
-Random_greedy::restore_map_size (K_best_t& current_K_best)
-{
-  K_best_t::iterator it = current_K_best.end();
-  current_K_best.erase(--it);
-}
-
-bool
-Random_greedy::to_be_inserted (const K_best_t& Kmap, K_best_t::iterator ub) const
-{
-  return (Kmap.empty() || ub != Kmap.cend());
-}
-
-void
-Random_greedy::update_best_schedule (job_schedule_t& new_schedule)
-{
-  std::string base = "";
-  if (verbose > 0)
-  {
-    base = prepare_logging();
-    std::cout << base << "--- update best schedule." << std::endl;
-  }
-  
-  // find execution time of first ending job
-  double first_finish_time = find_first_finish_time(new_schedule);
-
-  // compute cost of current schedule
-  double current_cost = objective_function(new_schedule, first_finish_time,
-                                           nodes);
-
-  if (verbose > 1)
-  {
-    if (! K_best.empty())
-      std::cout << base <<"\tcurrent optimal cost: " << K_best.cbegin()->first 
-                <<"; ";
-    else
-      std::cout << base << "\t";
-    std::cout << base << "new proposed cost: " << current_cost << std::endl;
-  }
-
-  // check if current solution is one of the best schedules
-  K_best_t::iterator ub = K_best.upper_bound(current_cost);
-  if (to_be_inserted(K_best, ub))
-  {
-    Best_solution BS(new_schedule, nodes, last_node_idx, first_finish_time);
-    K_best.insert(ub,std::pair<double,Best_solution>(current_cost,BS));
-
-    if (verbose > 1)
-      std::cout << base << "\t\t---> INSERTED";
-
-    if (K_best.size() > K)
-    {
-      restore_map_size(K_best);
-
-      if (verbose > 1)
-        std::cout << base << " ---> REMOVED LAST ELEMENT";
-    }
-    if (verbose > 1)
-      std::cout << std::endl;
-  }
-}
-
+/*
+* specializations of template classes
+*/
+template class Random_greedy<std::less<double>>;
+template class Random_greedy<std::greater<double>>;

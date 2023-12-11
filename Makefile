@@ -3,8 +3,10 @@ LISTDIR = $(FOLDER)/data/lists
 LIST ?= list_of_inputs.txt
 LISTD ?= list_of_data.txt
 SSYS ?= true
+ARGS1 ?= 
+ARGS2 ?= 
 
-.PHONY: help all run list data tests clean testclean distclean
+.PHONY: help all run list data tests api collect plot clean testclean distclean
 
 .DEFAULT_GOAL = all
 
@@ -74,21 +76,20 @@ help:
 	@echo
 	@echo "------ run:	run the optimization tool; requires as \
 	arguments:"
-	@echo "		ARGS=\"method=<method name> folder=<path to result folder>\""
+	@echo "		ARGS=\"method nInitialJ nN nJ lambda mu myseed \
+	delta\""
 	@echo "		if the method does not uses randomization; the \
 	same plus"
-	@echo "		seed=<seed> iter=<number of random iterations>"
+	@echo "		cppseed nRandomIter"
 	@echo "		otherwise;"
 	@echo "		make run ARGS=\"-h\""
-	@echo "		provides further information about these and other non-mandatory"
-	@echo "		parameters"
+	@echo "		provides further information about the parameters"
 	@echo
 	@echo "		Example:"
-	@echo "		make run ARGS=\"method=Greedy folder=~/GPUspb/build/data/\\"
-	@echo "		tests_new/1-3-30-1000-high-000/results_0.5\""
+	@echo "		make run ARGS=\"FedeCpp4 1 2 20 45000 1 1000 0.5\""
 	@echo "		or"
-	@echo "		make run ARGS=\"method=Greedy folder=~/GPUspb/build/data/\\"
-	@echo "		tests_new/1-3-30-1000-high-000/results_0.5 seed=1020 iter=100\""
+	@echo "		make run ARGS=\"FedeCpp4_R 1 2 20 45000 1 1000 0.5 \
+	1020 1000\""
 	@echo
 	@echo "------ tests:	automatically performs a series of tests"
 	@echo "		Intended usage:"
@@ -124,8 +125,16 @@ help:
 	@echo "		to specify a different folder for outputs (written\
 	 by default"
 	@echo "		in build/output, type"
-	@echo "		make tests ARGS=\"-o build/output_new\""
-	@echo "		NOTE: the name of the new output folder must start by output"
+	@echo "		make tests ARGS=\"-o build/new_output_folder\""
+	@echo
+	@echo "------ collect:	collect results of simulations, producing csv files "
+	@echo "		with aggregated costs and times"
+	@echo "		Intended usage:"
+	@echo "		make collect DIR=parent_directory"
+	@echo
+	@echo "		All results (namely folders whose name is call_1-*) should be "
+	@echo "		stored in parent_directory/results, while the logs in "
+	@echo "		parent_directory/output"
 	@echo
 	@echo "------ clean:	remove object files from build/ folder"
 	@echo
@@ -148,16 +157,24 @@ list:
 
 data:
 	python3 script/py/run_experiments.py -l $(LISTDIR)/$(LISTD) -o \
-		outData --exec script/py/generate_data_new.py $(ARGS)
-	$(RM) -r outData
-
-data_old:
-	python3 script/py/run_experiments.py -l $(LISTDIR)/$(LISTD) -o \
-		outData --exec script/py/convert_data.py $(ARGS)
+		outData --exec script/py/generate_data.py $(ARGS)
 	$(RM) -r outData
 
 tests:
 	python3 script/py/run_experiments.py -l $(LISTDIR)/$(LIST) $(ARGS)
+
+api:
+	python3 script/py/stochastic.py
+
+collect:
+	python3 script/py/collect_costs.py $(DIR)/results $(ARGS1)
+	python3 script/py/collect_tardi.py $(DIR)/results $(ARGS1)
+	python3 script/py/collect_sim_time.py $(DIR)/results $(ARGS1)
+	python3 script/py/collect_time.py $(DIR)/output $(ARGS1)
+	python3 script/py/aggregate_results.py $(DIR)/csv $(ARGS2)
+
+plot:
+	python3 script/py/plot_results.py $(DIR)/csv/aggregated_results -p $(DIR)
 
 clean:
 	@(make clean -C $(FOLDER))

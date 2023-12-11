@@ -1,42 +1,29 @@
-// Copyright 2020-2021 Federica Filippini
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 #include "schedule.hpp"
 
-Schedule::Schedule (setup_time_t::const_iterator s, unsigned n):
-  csetup(s), node_idx(n), empty_schedule(false)
+Schedule::Schedule (const std::string& n, const std::string& gt, double et, 
+                    unsigned g, double f, unsigned id):
+  node_ID(n), GPUtype(gt), selected_time(et), n_assigned_GPUs(g),
+  assigned_GPU_f(f), shared_GPU_ID(id)
 {}
 
-const Setup&
-Schedule::get_setup (void) const
+Schedule::Schedule (const row_t& info)
 {
-  assert(! empty_schedule);
-  return csetup->first;
-}
-
-double 
-Schedule::get_selectedTime (void) const 
-{
-  double t = std::numeric_limits<double>::infinity();
-  if (! empty_schedule)
-    t = csetup->second;
-  return t;
-}
-
-unsigned
-Schedule::get_node_idx (void) const
-{
-  assert(! empty_schedule);
-  return node_idx;
+  iter = (info[0].empty()) ? 0 : std::stoi(info[0]);
+  sim_time = (info[1].empty()) ? 0 : std::stod(info[1]);
+  //
+  selected_time = (info[2].empty()) ? NaN : std::stod(info[2]);
+  execution_time = (info[3].empty()) ? NaN : std::stod(info[3]);
+  completion_percent = (info[4].empty()) ? NaN : std::stod(info[4]);
+  start_time = (info[5].empty()) ? NaN : std::stod(info[5]);
+  finish_time = (info[6].empty()) ? NaN : std::stod(info[6]);
+  //
+  node_ID = info[7];
+  GPUtype = info[8];
+  n_assigned_GPUs = (info[9].empty()) ? 0 : std::stoi(info[9]);
+  //
+  tardiness = (info[10].empty()) ? NaN : std::stod(info[10]);
+  GPUcost = (info[11].empty()) ? NaN : std::stod(info[11]);
+  tardinessCost = (info[12].empty()) ? NaN : std::stod(info[12]);
 }
 
 void
@@ -48,20 +35,43 @@ Schedule::set_tardiness (double t)
 }
 
 void
-Schedule::compute_vmCost (unsigned g)
+Schedule::compute_GPUcost (unsigned g, double GPU_cost)
 {
-  if (! empty_schedule)
-  {
-    vmCost = execution_time * (csetup->first).get_cost() / 3600 * 
-             (csetup->first).get_nGPUs() / g;
-  }
+  GPUcost = execution_time * GPU_cost / 3600 * n_assigned_GPUs / g;
+  GPUcost *= assigned_GPU_f;
 }
 
 void
 Schedule::compute_tardinessCost (double tw)
 {
-  if (! empty_schedule)
-    tardinessCost = tardiness * tw;
+  tardinessCost = tardiness * tw;
+}
+
+void
+Schedule::change_configuration (const std::string& n, const std::string& gt, 
+                                double t, unsigned g, double f, unsigned gid)
+{
+  node_ID = n;
+  GPUtype = gt;
+  selected_time = t;
+  n_assigned_GPUs = g;
+  assigned_GPU_f = f;
+  shared_GPU_ID = gid;
+}
+
+void
+Schedule::change_configuration (double t, unsigned g)
+{
+  selected_time = t;
+  n_assigned_GPUs = g;
+}
+
+void
+Schedule::change_configuration (double t, double f, double pf)
+{
+  selected_time = t;
+  assigned_GPU_f = f;
+  previous_GPU_f = pf;
 }
 
 void
@@ -69,62 +79,24 @@ Schedule::print_names (std::ostream& ofs, char endline)
 {
   ofs << "n_iterate,sim_time,";
   Job::print_names(ofs,',');
-  ofs << "ExecutionTime,CompletionPercent,StartTime,FinishTime,";
-  Node::print_names(ofs,',');
-  Setup::print_names(ofs,',');
-  ofs << "Tardiness,VMcost,TardinessCost,TotalCost" << endline;
+  ofs << "SelectedTime,ExecutionTime,CompletionPercent,StartTime,FinishTime,";
+  ofs << "node_ID,GPUtype,n_assigned_GPUs,assigned_GPU_f,GPU_ID,";
+  ofs << "Tardiness,GPUcost,TardinessCost,TotalCost" << endline;
 }
 
 void
-Schedule::print (const Job& j, const std::vector<Node>& nodes, 
-                 std::ostream& ofs, char endline) const
+Schedule::print (const Job& j, std::ostream& ofs, char endline) const
 {
   ofs << iter << ',' << sim_time << ',';
   j.print(ofs,',');
-  ofs << execution_time << ',' << completion_percent << ',' 
-      << start_time     << ',' << finish_time        << ',';
-  if (! empty_schedule)
-  {
-    nodes[node_idx].print(ofs,',');
-    (csetup->first).print(ofs,',');
-  }
+  ofs << selected_time << ',' << execution_time << ',' << std::setprecision(10)
+      << completion_percent << std::setprecision(6)
+      << ',' << start_time << ',' << finish_time << ',';
+  if (n_assigned_GPUs != 0)
+    ofs << node_ID << ',' << GPUtype << ',';
   else
-  {
-    Node n;
-    n.print(ofs, ',');
-    Setup s;
-    s.print(ofs,',');
-  }
-  ofs << tardiness << ',' << vmCost << ',' << tardinessCost << ',' 
-      << (vmCost+tardinessCost) << endline;
-}
-
-bool
-operator== (const Schedule& s1, const Schedule& s2)
-{
-  bool equal = false;
-
-  // if the schedules are not empty, check if the corresponding setups and
-  // number of GPUs are equal
-  if (! s1.empty_schedule && ! s2.empty_schedule)
-  {
-    const Setup& stp1 = s1.csetup->first;
-    const Setup& stp2 = s2.csetup->first;
-
-    if (stp1.get_nGPUs() == stp2.get_nGPUs())
-    {
-      equal = (stp1 == stp2);
-    }
-  }
-  // if both schedules are empty, the "setup" is still considered the same
-  else if (s1.isEmpty() && s2.isEmpty())
-    equal = true;
-
-  return equal;
-}
-
-bool
-operator!= (const Schedule& s1, const Schedule& s2)
-{
-  return ! (s1 == s2);
+    ofs << ",,";
+  ofs << n_assigned_GPUs << ',' << assigned_GPU_f << ',' << shared_GPU_ID << ','
+      << tardiness << ',' << GPUcost << ',' << tardinessCost << ','
+      << (GPUcost+tardinessCost) << endline;
 }

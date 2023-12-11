@@ -1,44 +1,16 @@
-// Copyright 2020-2021 Federica Filippini
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 #ifndef FILEIO_HH
 #define FILEIO_HH
 
-#include <string>
-#include <fstream>
-#include <sstream>
 #include <iostream>
 
-#include "utilities.hpp"
+#include "table.hpp"
 #include "job.hpp"
-#include "setup.hpp"
 #include "node.hpp"
 #include "schedule.hpp"
 
-/*  read_csv
-*     reads a csv file and stores the content in a table (see utilities.hpp 
-*     for further information about the used type).
-*
-*   NOTE: the first row of the csv file is assumed to store the name 
-*         of the relative columns, thus its content is dropped
-*
-*   Input:  std::ifstream&    file to be read
-*           table_t&          table where to store values read from file
-*/
-void read_csv (std::ifstream&, table_t&);
-
-/*  create_container
-*     reads a csv file using read_csv and stores the relative information in 
-*     the given container
+/* create_container
+*   read a csv file using read_csv and store the relative information in 
+*   the given container
 *
 *   NOTE (1): the container can be of whatever type ExtT s.t. the method 
 *             insert is supported (e.g. std::vector, std::map, etc.)
@@ -47,17 +19,16 @@ void read_csv (std::ifstream&, table_t&);
 *             container can be whatever type s.t. it has a constructor that 
 *             takes as parameter an element of type row_t (e.g. Job, Node,etc.)
 *
-*   Input:  ExtT<IntT>&         container to be filled
-*           const std::string&  name of file storing information to fill the
-*                               container
+*   Input:  ExtT<IntT>&                         container to be filled
+*           const std::string&                  name of file storing info
 */
 template <template <typename...> class ExtT, typename IntT, typename ... Ts>
 void
 create_container (ExtT<IntT,Ts...>&, const std::string&);
 
-/*  print_container
-*     prints the elements of a given container on a file whose name is passed
-*     as parameter
+/* print_container
+*   print the elements of a given container on a file whose name is passed
+*   as parameter
 *
 *   NOTE (1): the container can be of whatever type ExtT s.t. range for on its 
 *             elements is supported (e.g. std::vector, std::map, etc.)
@@ -66,88 +37,80 @@ create_container (ExtT<IntT,Ts...>&, const std::string&);
 *             container can be whatever type s.t. methods print_names and 
 *             print are implemented (e.g. Job, Node, etc.)
 *
-*   Input:  const ExtT<IntT>&   container to be printed
-*           const std::string&  name of file where to print the container
+*   Input:  const ExtT<IntT>&                   container to be printed
+*           const std::string&                  name of file where to print
 */
 template <template <typename...> class ExtT, typename IntT, typename ... Ts>
 void
 print_container (const ExtT<IntT,Ts...>&, const std::string&);
 
-/*  create_map
-*     creates a map storing information about jobs and their execution times
-*     in different configurations, reading information from a csv file
+/* load_time_table
+*   create a map storing information about jobs and their execution times
+*   in different configurations, reading information from a csv file
 *
-*   Input:  time_table_t&       map to be filled (see utilities.hpp)
-*           const std::string&  name of file storing information
+*   Input:  const std::string&                  name of file storing info
+*
+*   Output: std::shared_ptr<time_table_t>       pointer to new table
 */
-void
-create_map (time_table_t&, const std::string&);
+std::shared_ptr<time_table_t>
+load_time_table (const std::string&, std::shared_ptr<time_table_t> = nullptr);
 
-/*  print_map
-*     prints the map storing information about jobs and their execution times
-*     in different configurations, reading information from a csv file
+/* print_map
+*   print the map storing information about jobs and their execution times
+*   in different configurations, reading information from a csv file
 *
-*   Input:  time_table_t&       map to be printed (see utilities.hpp)
-*           const std::string&  name of file where to print the map
+*   Input:  time_table_t&                       map to be printed
+*           const std::string&                  name of file where to print
 */
 void
 print_map (const time_table_t&, const std::string&);
 
-/*  print_result
+/* read_old_schedule
+*   read a csv file containing an old schedule
 *
-*   Input:  const std::vector<job_schedule_t>&    full schedule to be printed
-*           const std::vector<Node>&              vector of nodes
-*           const std::string&                    filename
+*   Input:  const std::string&                  filename
+*           job_schedule_t&                     schedule to be updated
 */
 void
-print_result (const std::vector<job_schedule_t>&, const std::vector<Node>&,
-              const std::string&);
+read_old_schedule (const std::string&, job_schedule_t&);
 
-
-// implementation of template functions
-//
-template <template <typename...> class ExtT, typename IntT, typename ... Ts>
+/* load_jobs_list
+*   load the list of jobs from the given file
+*
+*   Input:  std::list<Job>&                     list of jobs
+*           const std::string&                  filename
+*/
 void
-create_container (ExtT<IntT,Ts...>& cont, const std::string& filename)
-{
-  // open file
-  std::ifstream ifs(filename);
+load_jobs_list (std::list<Job>&, const std::string&);
 
-  if (ifs)
-  {
-    // read file
-    table_t table;
-    read_csv(ifs, table);
+/* load_nodes_list
+*   load the list of available nodes from the given file
+*
+*   Input:  nodes_map_t&                        list of nodes
+*           const std::string&                  filename
+*
+*   Output: unsigned                            number of available nodes
+*/
+unsigned
+load_nodes_list (nodes_map_t&, const std::string&);
 
-    for (typename table_t::const_iterator it = table.cbegin();
-         it != table.cend(); ++it)
-    {
-      // add new element to the cont
-      cont.insert(cont.end(),IntT(*it));
-    }
-  }
-  else
-    std::cerr << "ERROR in create_container: file " << filename
-              << " cannot be opened" << std::endl;
-}
-//
-//
-template <template <typename...> class ExtT, typename IntT, typename ... Ts>
-void
-print_container (const ExtT<IntT,Ts...>& cont, const std::string& filename)
-{
-  // open file
-  std::ofstream ofs(filename);
+/* load_costs
+*   load the catalogue of GPU costs from the given file
+*
+*   Input:  catalogue_t&                        catalogue of GPU costs
+*           const std::string&                  filename
+*
+*   Output: unsigned                            total number of available GPUs
+*/
+unsigned
+load_costs (catalogue_t&, const std::string&);
 
-  if (ofs)
-  {
-    IntT::print_names(ofs);
-    for (const IntT& elem : cont)
-      elem.print(ofs);
-  }
-  else
-    std::cerr << "ERROR in print_container: file " << filename
-              << " cannot be opened" << std::endl;
-}
+/* prepare_logging
+*   return a string with the correct number of \t given the specified
+*   indentation level (to be used for logging information)
+*
+*   Input:  unsigned                            indentation level - default: 0
+*/
+std::string prepare_logging (unsigned = 0);
 
 #endif /* FILEIO_HH */

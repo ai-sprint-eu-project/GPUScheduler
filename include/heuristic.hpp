@@ -1,211 +1,157 @@
-// Copyright 2020-2021 Federica Filippini
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 #ifndef HEURISTIC_HH
 #define HEURISTIC_HH
 
+#include "elite_solutions.hpp"
+#include "system.hpp"
+#include "optimal_configurations.hpp"
 #include "fileIO.hpp"
-#include "schedule.hpp"
-#include "timing.hpp"
 
-#include <random>
-
+template <typename COMP>
 class Heuristic {
 
 protected:
-  // full path of data (and results) directory
-  std::string directory = "";
+  // type definitions
+  typedef typename Elite_solutions<COMP>::K_best_t K_best_t;
 
-  const double scheduling_interval = INF;
+  // system
+  System system;
 
-  double current_time = 0.;
+  // proxy function
+  obj_function_t proxy_function;
 
-  // list of all jobs
-  std::list<Job> jobs;
-  // list of all nodes
-  std::vector<Node> nodes;
-  // table tjvg for all j (see utilities.hpp for type definition)
-  time_table_t ttime;
+  // current time
+  double current_time = INF;
 
-  // list of submitted jobs
-  std::list<Job> submitted_jobs;
-  // list of scheduled jobs
-  std::vector<job_schedule_t> scheduled_jobs;
-
-  // index of last used node
-  unsigned last_node_idx = 0;
-
-  // total costs and total tardiness
-  double total_vm_cost = 0.0;
-  double total_tardi_cost = 0.0;
-  double total_tardi = 0.0;
-
-  // verbosity level - 0 for minimum, 2 for maximum
+  // verbosity level
   unsigned verbose = 0;
-  unsigned level = 0;
-
-  // ONLY FOR RANDOMIZED HEURISTC METHODS
-  unsigned max_random_iter = 0;           // maximum # of random iterations
-  std::default_random_engine generator;   // generator
-
-  /* prepare_logging
-  */
-  std::string prepare_logging (void) const;
-
-  /* submit_job
-  *   add a new job to the queue according to its submission time
-  *
-  *   Input:  double    elapsed time between previous and current iteration
-  *
-  *   Output: double    submission time of new job
-  */
-  double submit_job (double);
-
-  /* remove_ended_jobs
-  *   remove from the queue all jobs that have already been executed
-  */
-  virtual void remove_ended_jobs (void);
+  unsigned level = 2;
 
   /* sort_jobs_list
+  *   sort the submitted_jobs list according to compare_pressure
   */
-  virtual void sort_jobs_list (void) = 0;
+  virtual void sort_jobs_list (void);
+
+  /* available_resources
+  *   return true if there are still available resources in the system
+  */
+  bool available_resources (void) const;
 
   /* close_nodes
   *   close all the currently opened nodes
   */
-  virtual void close_nodes (void);
+  void close_nodes (void);
 
-  /* objective_function
-  *   evaluate objective function of the current schedule
+  /* assign:
+  *   assign the given job to the required node
   *
-  *   Input:  job_schedule_t&             new proposed schedule
-  *           double                      elapsed time between previous and 
-  *                                       current iteration
-  *           const std::vector<Node>&    vector of open nodes
+  *   Input:  const Job&                      job to be assigned
+  *           setup_time_t::const_iterator    iterator to the best setup
+  *           job_schedule_t&                 new proposed schedule
   *
-  *   Output: double              total cost of the proposed schedule
+  *   Output: bool                            true if job has been assigned
   */
-  virtual double objective_function (job_schedule_t&, double,
-                                     const std::vector<Node>&) = 0;
+  bool assign (const Job&, setup_time_t::const_iterator, job_schedule_t&);
 
-  /* update_execution_times
-  *   update execution time of jobs that have been partially executed
+  /* assign_to_suboptimal:
+  *   assign the given job to a suboptimal configuration, available in 
+  *   an already opened node
   *
-  *   Input:  unsigned    iteration number
-  *           double      elapsed time between previous and current iteration
-  */
-  void update_execution_times (unsigned, double);
-
-  /* update_minMax_exec_time
-  *   compute and update minimum and maximum execution time of the given job
-  */
-  void update_minMax_exec_time (Job&) const;
-
-  /* update_scheduled_jobs
-  *   update list of scheduled jobs with information about execution time,
-  *   costs, etc
+  *   Input:  const Job&                      job to be assigned
+  *           const setup_time_t&             execution times of the given job
+  *           Optimal_configurations&         see optimal_configurations.hpp
+  *           job_schedule_t&                 new proposed schedule
   *
-  *   Input:  unsigned    iteration number
-  *           double      elapsed time between previous and current iteration
-  *
-  *   Output: bool        true if completion percent of all jobs is 100
+  *   Output: bool                            true if job has been assigned
   */
-  bool update_scheduled_jobs (unsigned, double);
-
-  /* find_first_finish_time
-  *   return the execution time of the first ending job in the given schedule
-  */
-  double find_first_finish_time (const job_schedule_t&) const;
+  virtual bool assign_to_suboptimal (const Job&, const setup_time_t&, 
+                                     Optimal_configurations&, 
+                                     job_schedule_t&) = 0;
 
   /* perform_assigment
   *   assign the selected job to the new proposed schedule
   *
   *   Input:  const Job&                      job to be assigned
   *           job_schedule_t&                 new proposed schedule
-  */
-  virtual void perform_assignment (const Job&, job_schedule_t&) = 0;
-
-  /* perform_scheduling
-  *   perform the scheduling process that assigns the best configuration to
-  *   each submitted jobs (as long as resources are available)
   *
-  *   Output: job_schedule_t        proposed schedule
+  *   Output: bool                            true if job has been assigned
   */
-  virtual job_schedule_t perform_scheduling (void);
-
-  /* available_resources
-  *   return true if resources are still available in the system
-  */
-  bool available_resources (void) const;
-
-  /* preprocessing
-  *   update execution time and pressure of all submitted jobs, then sort the 
-  *   queue as prescribed by the employed method
-  */
-  virtual void preprocessing (void);
+  virtual bool perform_assignment (const Job&, job_schedule_t&) = 0;
 
   /* scheduling_step
   *   sort the list of submitted jobs and perform scheduling of all
   *   submitted jobs
   *
-  *   Input:    job_schedule_t&     empty schedule to be built
+  *   Input:  job_schedule_t&                 empty schedule to be built
+  *
+  *   Output: unsigned                        number of assigned jobs
   */
-  virtual void scheduling_step (job_schedule_t&) = 0;
+  unsigned scheduling_step (job_schedule_t&);
 
+  /* postprocessing
+  *   aim to reduce the number of idle GPU fractions in selected configurations
+  *
+  *   Input:  job_schedule_t&                 proposed schedule to be updated
+  */
+  void postprocessing (job_schedule_t&);
+
+  /* to_be_inserted
+  *  return true if the element characterized by the given upper bound should
+  *  be inserted in the map
+  */
+  virtual bool to_be_inserted (const K_best_t&, 
+                               typename K_best_t::iterator) const;
+
+  /* restore_map_size
+  *   erase the element in the map with the worst cost (the last element), so 
+  *   that the size of the map returns less than or equal to the maximum size K
+  *
+  *   Input:  K_best_t&                       map to be modified
+  */
+  void restore_map_size (K_best_t&);
+
+  /* update_elite_solutions
+  *   compute the cost of the given schedule and inserts it in the map of
+  *   elite solutions if the cost is better than other costs already in the map
+  *
+  *   Input:  const job_schedule_t&           new proposed schedule
+  *           K_best_t&                       map to be modified
+  *           unsigned                        max number of elite solutions
+  */
+  void update_elite_solutions (const job_schedule_t&, K_best_t&, unsigned);
 
 public:
   /*  constructor
   *
-  *   Input:  const std::string&    full path of data directory
-  *           const std::string&    name of file with the list of jobs
-  *           const std::string&    name of file with execution times of jobs
-  *           const std::string&    name of file with the list of nodes
+  *   Input:  const System&                   system
+  *           const obj_function_t&           proxy function
+  *           unsigned                        level for logging
+  */
+  Heuristic (const System&, const obj_function_t&, unsigned);
+
+  /*  init
+  *   re-initialize available nodes, submitted jobs and proxy function
+  *
+  *   Input:  const System&                   system
+  *           const obj_function_t&           proxy function
   *
   */
-  Heuristic (const std::string&, const std::string&, const std::string&, 
-             const std::string&);
+  void init (const System&, const obj_function_t&);
+
+  /* perform_scheduling
+  *   perform the scheduling process that assigns the best configuration to
+  *   each submitted jobs (as long as resources are available)
+  *
+  *   Input:  double                          current time
+  *           Elite_solutions<COMP>&          empty map of elite solutions
+  *           unsigned                        max number of elite solutions
+  *           unsigned                        verbosity level (default 0)
+  */
+  virtual void perform_scheduling (double, Elite_solutions<COMP>&, unsigned, 
+                                   unsigned = 0) = 0;
   
   /* destructor
   */
   virtual ~Heuristic (void) = default;
-
-  /* algorithm
-  *
-  *   Input:  unsigned      verbosity level
-  */
-  void algorithm (unsigned);
-
-  /* algorithm (overload - for eventual randomized methods)
-  *
-  *   Input:  unsigned      verbosity level
-  *           unsigned      seed for random numbers generator
-  *           unsigned      maximum number of random iterations
-  */
-  void algorithm (unsigned, unsigned, unsigned);
-  
-  /* print_data
-  *   print data about jobs, nodes and execution times used by the algorithm
-  *   using functions from fileIO.hpp (see for further information)
-  */
-  void print_data (void) const;
-
-  /* print_schedule
-  *   print the schedule produced by the algorithm using the function
-  *   print_result from fileIO.hpp (see for further information)
-  *
-  *   Input:    const std::string&    filename where the schedule should be
-  *                                   printed
-  */
-  void print_schedule (const std::string&) const;
 
 };
 

@@ -1,109 +1,67 @@
-// Copyright 2020-2021 Federica Filippini
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 #include "node.hpp"
 
-const std::string&
-Node::get_VMtype (void) const
+Node::Node (const row_t& info)
 {
-  assert(isOpen);
-  return c.get_VMtype();
-}
-  
-const std::string&
-Node::get_GPUtype (void) const 
-{
-  assert(isOpen);
-  return c.get_GPUtype();
+  ID = info[0];
+  GPUtype = info[1];
+  nGPUs = std::stoi(info[2]);
+  cost = std::stod(info[3]);
+  //
+  n_remainingGPUs = nGPUs;
 }
 
-double
-Node::get_cost (void) const
-{
-  assert(isOpen);
-  return c.get_cost();
-}
+Node::Node (const std::string& id, const std::string& gputype, unsigned g,
+            double f, unsigned gid):
+  ID(id), GPUtype(gputype), nGPUs(g), GPU_f(f), GPU_ID(gid)
+{}
 
-unsigned
+unsigned 
 Node::get_usedGPUs (void) const
 {
-  assert(isOpen);
-  return c.get_usedGPUs();
+  return nGPUs - n_remainingGPUs;
 }
 
 unsigned
 Node::get_remainingGPUs (void) const
 {
-  assert(isOpen);
-  return c.get_remainingGPUs();
+  return n_remainingGPUs;
 }
-
+ 
 bool
-Node::open (void) const
+Node::isOpen (void) const
 {
-  return isOpen;
-}
-
-void 
-Node::set_remainingGPUs (int g)
-{
-  c.update_n_GPUs(g);
+  return (n_remainingGPUs < nGPUs);
 }
 
 void
-Node::change_setup (const Setup& stp)
+Node::set_remainingGPUs (unsigned g)
 {
-  c.set_configuration(stp);
+  n_remainingGPUs -= g;
 }
 
 void
-Node::open_node (const Setup& stp)
+Node::free_GPUs (unsigned g)
 {
-  isOpen = true;
-  c.set_configuration(stp);
-}
-
-void
-Node::close_node (void)
-{
-  isOpen = false;
-  c.delete_configuration();
+  n_remainingGPUs += g;
 }
 
 void
 Node::print_names (std::ostream& ofs, char endline)
 {
-  ofs << "Nodes" << endline;
+  ofs << "ID,GPUtype,nGPUs,cost" << endline;
 }
 
 void
 Node::print (std::ostream& ofs, char endline) const
 {
-  ofs << ID << endline;
-}
-
-void
-Node::print_open_node (std::ostream& ofs) const
-{
-  assert(isOpen);
-  Node::print_names(ofs,',');
-  Configuration::print_names(ofs);
-  
-  print(ofs,',');
-  c.print(ofs);
+  ofs << ID << "," << GPUtype << "," << nGPUs << "," << cost << endline;
 }
 
 bool
-operator== (const Node& n1, const Node& n2)
+operator< (const Node& n1, const Node& n2)
 {
-  return (n1.ID == n2.ID);
+  bool b1 = n1.n_remainingGPUs < n2.n_remainingGPUs;
+  bool b2 = n1.n_remainingGPUs == n2.n_remainingGPUs;
+  bool b3 = n1.ID < n2.ID;
+  return (b1 || (b2 && b3));
 }

@@ -1,31 +1,14 @@
-// Copyright 2020-2021 Federica Filippini
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 #include <iostream>
 #include <cstring>
 
-#include "greedy.hpp"
-#include "random_greedy.hpp"
-#include "local_search.hpp"
-#include "path_relinking.hpp"
-#include "FIFO.hpp"
-#include "EDF.hpp"
-#include "Priority.hpp"
-#include "analysis.hpp"
-#include "builders.hpp"
+#include "simulator.hpp"
 #include "GetPot.hpp"
 
 
 void print_help (void);
+bool is_registered (const std::string& method);
+bool is_random (const std::string& method);
+bool is_FPM (const std::string& method);
 
 
 int main (int argc, char *argv[])
@@ -33,102 +16,143 @@ int main (int argc, char *argv[])
   int exit_code = 0;
 
   // initialze Getpot parser
-  GetPot GP(argc,argv);
+  GetPot GP(argc, argv);
     
   if (GP.search(1,"-h"))
-  	print_help();
+    print_help();
   else
   {
-  	std::string method = GP("method", "");
-  	std::string directory = GP("folder", "");
-  	unsigned cpp_seed = GP("seed", 0);
-  	unsigned n_random_iter = GP("iter", 0);
+    std::string method = GP("method", "");
+    std::string directory = GP("folder", "");
+    unsigned cpp_seed = GP("seed", 4010);
     unsigned verbose = GP("verbose", 0);
+    double current_time = GP("current_time", 0.0);
+    std::string simulation = GP("simulation", "False");
+    std::string stochastic = GP("stochastic", "False");
 
-  	if (method == "" || directory == "" || 
-  		(method == "RandomGreedy" && n_random_iter == 0) ||
-  		(method == "LocalSearch" && n_random_iter == 0))
-  	{
-  	  std::cerr << "\nERROR: missing or corrupted parameters" << std::endl;
-  	  print_help();
-  	  exit_code = 1;
-  	}
-  	else
-  	{
-	  	// create factory (TODO: move this where it should be)
-      typedef std::unique_ptr<BaseBuilder<Heuristic>> GreedyBuilder;
-      typedef std::map<std::string, GreedyBuilder> factory_t;
-      factory_t factory;
-      factory["Greedy"]       = GreedyBuilder(new Builder<Greedy, Heuristic>);
-      factory["RandomGreedy"] = GreedyBuilder(new Builder<Random_greedy, Heuristic>);
-      factory["LocalSearch"]  = GreedyBuilder(new Builder<Local_search, Heuristic>);
-      factory["PathRelinking"]= GreedyBuilder(new Builder<Path_relinking, Heuristic>);
-      factory["FIFO"]         = GreedyBuilder(new Builder<FIFO, Heuristic>);
-      factory["EDF"]          = GreedyBuilder(new Builder<EDF, Heuristic>);
-      factory["Priority"]     = GreedyBuilder(new Builder<Priority, Heuristic>);
-
+    if (method == "" || directory == "")
+    {
+      std::cerr << "\nERROR: missing or corrupted parameters" << std::endl;
+      print_help();
+      exit_code = 1;
+    }
+    else if (! is_registered(method))
+    {
+      std::cerr << "ERROR: method " << method << " is not registered"
+                << std::endl;
+      print_help();
+      exit_code = 2;
+    }
+    else
+    {
       // name of files containing data
-	    std::string jobs_list_filename = "Lof_Selectjobs.csv";
-	    std::string times_filename = "SelectJobs_times.csv";
-	    std::string nodes_filename = "tNodes.csv";
+      std::string jobs_list_filename = "Lof_Selectjobs.csv";
+      std::string times_filename = "SelectJobs_times.csv";
+      std::string nodes_filename = "tNodes.csv";
+      std::string costs_filename = "GPU-costs.csv";
 
-	    // initialization of method
-	    factory_t::const_iterator where = factory.find(method);
-	    if (where != factory.end())
-	    {
-	      std::unique_ptr<Heuristic> G = where->second->create(directory,
-	                                                        	jobs_list_filename, 
-	                                                        	times_filename, 
-	                                                        	nodes_filename);
+      if (simulation == "True" || simulation == "true")
+      {
+        // initialize simulator
+        Simulator S(directory, jobs_list_filename, times_filename, 
+                    nodes_filename, costs_filename, stochastic);
 
-	      std::string result_filename = method + "_schedule";
+        if (S.initialized())
+        {
+          // determine solution
+          costs_struct all_costs = S.algorithm(method, current_time, verbose, 
+                                               cpp_seed);
 
-	      // for random methods
-	      if (method == "RandomGreedy" || method == "LocalSearch" ||
-            method == "PathRelinking")
-	      {
-	      	result_filename += ("_" + std::to_string(cpp_seed) + ".csv");
-          G->algorithm(verbose, cpp_seed, n_random_iter);
-	      }
-	      else
-	      {
-	      	result_filename += ".csv";
-	      	G->algorithm(verbose);
-	      }
+          // print total tardiness and total simulation cost
+          std::string global_result_file = "all_results.csv";
+          std::ofstream ofs(directory + "/results/" + global_result_file, 
+                            std::ios::app);
+          ofs << method << "," << cpp_seed << "," << all_costs.total_tardi 
+              << "," << all_costs.total_tardiCost << "," 
+              << all_costs.total_nodeCost << "," << all_costs.total_GPUcost 
+              << "," << all_costs.total_energyCost << "," 
+              << all_costs.total_cost << std::endl;
+        }
+        else
+          exit_code = 3;
+      }
+      else
+      {
+        // initialize system
+        System sys(directory, jobs_list_filename, times_filename, 
+                      nodes_filename, costs_filename, verbose);
 
-	      // print resulting schedule
-        G->print_schedule(result_filename);
+        if (! sys.isEmpty())
+        {
+          // initialize optimizer
+          Optimizer OPT(sys);
 
-        #ifdef SMALL_SYSTEM
-          // analysis
-          Analysis A(directory);
-          A.perform_analysis(result_filename);
-          A.print(method, cpp_seed);
-        #endif
-	    }
-	    else
-	    {
-	      std::cerr << "ERROR: method " << method << " is not registered"
-	                << std::endl;
-	      exit_code = 2;
-	    }
-  	}
+          // determine solution
+          Solution sol = OPT.algorithm(method,current_time,verbose,cpp_seed);
+
+          // perform analysis
+          std::string old_solution_file = "previous_schedule.csv";
+          Analyzer analyzer(directory, sys, verbose);
+          analyzer.perform_analysis (old_solution_file, sol, is_FPM(method));
+
+          // print resulting schedule
+          std::string result_filename = method + "_schedule";
+          if (is_random(method))
+            result_filename += ("_" + std::to_string(cpp_seed));
+          result_filename += ".csv";
+          sol.print(directory + "/results/" + result_filename);
+        }
+        else
+          exit_code = 3;
+      }  
+    }
   }
 
   return exit_code;
-
 }
 
 
 void print_help (void)
 {
-  std::cout << "usage: ./main [arguments]\n";
+  std::cout << "\nusage: ./main [arguments]\n";
+  std::cout << "\narguments must be given in format name=value\n";
   std::cout << "\nrequired arguments (for all methods):\n";
-  std::cout << "\tmethod=:     name of the method you want to use\n";
-  std::cout << "\tfolder=:     complete path of data folder\n";
+  std::cout << "\tmethod:         name of the method you want to use\n";
+  std::cout << "\tfolder:         complete path of data folder\n";
+  std::cout << "\tcurrent_time:   current time\n";
   std::cout << "\nadditional arguments (for random methods):\n";
-  std::cout << "\tseed=:       seed for randomization\n";
-  std::cout << "\titer=:       number of random iterations\n";
+  std::cout << "\tseed:           seed for randomization\n";
+  std::cout << "\titer:           number of random iterations\n";
   std::cout << "\noptional arguments:\n";
-  std::cout << "\tverbose=:    verbosity level (0, 1, 2)\n" << std::endl;
+  std::cout << "\tverbose:        to increase the verbosity level\n";
+  std::cout << "\tsimulation:     true to perform a full simulation"
+            << std::endl;
+
+  std::cout << "\nlist of registered methods:\n";
+  std::cout << "FIFO:             First In First Out\n";
+  std::cout << "EDF:              Earliest Deadline First\n";
+  std::cout << "PS:               Priority Scheduling\n";
+  std::cout << "G:                Greedy\n";
+  std::cout << "RG:               Random Greedy (G + RG)\n";
+  std::cout << "LS:               Local Search (G + RG + LS)\n";
+  std::cout << "PR:               Path Relinking (G + RG + PR)\n";
+  std::cout << "STS:               Stochastic Scheduling\n"
+            << std::endl;
+}
+
+bool is_registered (const std::string& method)
+{
+  return (method == "FIFO" || method == "EDF" || method == "PS" || 
+          method == "G" || method == "RG" || method == "LS" || method == "PR" ||
+          method == "STS");
+}
+
+bool is_random (const std::string& method)
+{
+  return (method == "RG" || method == "LS" || method == "PR");
+}
+
+bool is_FPM (const std::string& method)
+{
+  return (method == "FIFO" || method == "EDF" || method == "PS");
 }

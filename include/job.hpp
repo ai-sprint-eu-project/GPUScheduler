@@ -1,15 +1,3 @@
-// Copyright 2020-2021 Federica Filippini
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 #ifndef JOB_HH
 #define JOB_HH
 
@@ -23,23 +11,31 @@
 class Job {
 
 public:
-  // type definitions
-  typedef std::array<std::string,6> info_t;
-  typedef std::array<double,5> time_info_t;
-
-  // friend operator==, operator!=, operator<
+  // friend operator== and operator!=
   friend bool operator== (const Job&, const Job&);
   friend bool operator!= (const Job&, const Job&);
-  friend bool operator< (const Job&, const Job&);
+
+  // other friend functions
+  friend bool compare_pressure (const Job&, const Job&);
+  friend bool compare_submissionTime (const Job&, const Job&);
+  friend bool compare_tardinessWeight (const Job&, const Job&);
+  friend bool compare_deadline (const Job&, const Job&);
 
 private:
-  // job_info = ['Application', 'Images', 'Epochs', 'Batchsize',
-  //             'OriginalID', 'ID']
-  info_t job_info;
+  std::string ID = "";
+  double submissionTime = 0.0;
+  double deadline = 0.0;
+  double tardinessWeight = 0.0;
+  double minExecutionTime = 0.0;
+  double maxExecutionTime = 0.0;
 
-  // time_info = ['SubmissionTime', 'Deadline', 'TardinessWeight', 
-  //              'MinExecutionTime', 'MaxExecutionTime']
-  time_info_t time_info;
+  double ratio_avg = 0.0;
+  double max_epochs = 0.0;
+  double epochs = 0.0;
+  std::string distribution = "";
+  unsigned current_gpus = 0;
+  double current_gpu_frac = 0.0;
+  double rescheduling_time = 0.0;
 
   // pressure = MinExecutionTime - Deadline
   double pressure;
@@ -57,18 +53,28 @@ public:
   Job (const row_t&);
   
   // getters
-  const std::string& get_originalID (void) const {return job_info[4];}
-  const std::string& get_ID (void) const {return job_info[5];} 
-  double get_submissionTime (void) const {return time_info[0];}
-  double get_deadline (void) const {return time_info[1];}
-  double get_tardinessWeight (void) const {return time_info[2];}
-  double get_minExecTime (void) const {return time_info[3];}
-  double get_maxExecTime (void) const {return time_info[4];}
+  const std::string& get_ID (void) const {return ID;} 
+  double get_submissionTime (void) const {return submissionTime;}
+  double get_deadline (void) const {return deadline;}
+  double get_tardinessWeight (void) const {return tardinessWeight;}
+  double get_minExecTime (void) const {return minExecutionTime;}
+  double get_maxExecTime (void) const {return maxExecutionTime;}
   double get_pressure (void) const {return pressure;}
+  double get_ratioavg (void) const {return ratio_avg;}
+  double get_maxepochs(void) const {return max_epochs;}
+  double get_epochs(void) const {return epochs;}
+  const std::string& get_distribution (void) const {return distribution;}
+  unsigned get_current_gpus (void) const {return current_gpus;}
+  double get_current_gpu_frac (void) const {return current_gpu_frac;}
+  double get_rescheduling_time (void) const {return rescheduling_time;}
 
   // setters
-  void set_minExecTime (double m) {time_info[3] = m;}
-  void set_maxExecTime (double M) {time_info[4] = M;}
+  void set_minExecTime (double m) {minExecutionTime = m;}
+  void set_maxExecTime (double M) {maxExecutionTime = M;}
+  void set_epochs (double fr) {epochs += (max_epochs-epochs) * fr;}
+  void set_current_gpus (unsigned g) {current_gpus = g;}
+  void set_current_gpu_frac (double f) {current_gpu_frac = f;}
+  void set_rescheduling_time (double t) {rescheduling_time = t;}
 
   /*  update_pressure
   *
@@ -79,18 +85,18 @@ public:
 
   /*  print_names (static)
   *
-  *   Input:  std::ostream&       where to print names of fields stored in 
-  *                               job_info and time_info
-  *           char endline='\n'   last character to be printed (default \n)
+  *   Input:  std::ostream&       where to print names of information 
+  *                               stored in the class
+  *           char                last character to be printed (default \n)
   */
-  static void print_names (std::ostream&, char endline='\n');
+  static void print_names (std::ostream&, char = '\n');
 
   /*  print
   *
   *   Input:  std::ostream&       where to print job info
-  *           char endline='\n'   last character to be printed (default \n)
+  *           char                last character to be printed (default \n)
   */
-  void print (std::ostream&, char endline='\n') const;
+  void print (std::ostream&, char = '\n') const;
   
 };
 
@@ -98,8 +104,11 @@ public:
 bool operator== (const Job&, const Job&);
 bool operator!= (const Job&, const Job&);
 
-// operator<  j1 < j2 if j1.pressure < j2.pressure
-bool operator< (const Job&, const Job&);
+// versions of operator< that compare different aspects of jobs
+bool compare_pressure (const Job&, const Job&);
+bool compare_submissionTime (const Job&, const Job&);
+bool compare_tardinessWeight (const Job&, const Job&);
+bool compare_deadline (const Job&, const Job&);
 
 // specialization of the hash function
 namespace std {    

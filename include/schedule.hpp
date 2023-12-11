@@ -1,36 +1,19 @@
-// Copyright 2020-2021 Federica Filippini
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 #ifndef SCHEDULE_HH
 #define SCHEDULE_HH
 
 #include "job.hpp"
-#include "setup.hpp"
 #include "node.hpp"
-
-#include <cassert>
 
 class Schedule {
 
-public:
-  // friend operator==, operator!=
-  friend bool operator== (const Schedule&, const Schedule&);
-  friend bool operator!= (const Schedule&, const Schedule&);
-
 private:
-  setup_time_t::const_iterator csetup;
-  unsigned node_idx;
-
-  bool empty_schedule = true;
+  std::string node_ID = "";
+  std::string GPUtype = "";
+  double selected_time = 0.;
+  unsigned n_assigned_GPUs = 0;
+  double assigned_GPU_f = 0.;
+  unsigned shared_GPU_ID = 0;
+  double previous_GPU_f = 0.;
 
   unsigned iter = 0;
   double sim_time = 0;
@@ -40,35 +23,50 @@ private:
   double start_time = 0.;
   double finish_time = 0.;
   double tardiness = 0.;
-  double vmCost = 0.;
+  double GPUcost = 0.;
   double tardinessCost = 0.;
 
 public:
-  /*  constructors
+  /* constructors
   *
-  *   input(1):  void              default
+  *   Input(1):  void                 default
   *
-  *   input(2):  setup_time_t::const_iterator   iterator to a setup
-  *              unsigned                       node index
+  *   Input(2):  const std::string&   selected node ID
+  *              const std::string&   selected GPU type
+  *              double               expected execution time
+  *              unsigned             number of assigned GPUs
+  *              double               assigned GPU fraction (default = 1)
+  *              unsigned             shared GPU ID (default = 0)
+  *
+  *   Input(3):  const row_t&         list of parameters (read from file) to 
+  *                                   initialize a schedule
   *
   */
   Schedule (void) = default;
-  Schedule (setup_time_t::const_iterator, unsigned);
+  Schedule (const std::string&, const std::string&, double, unsigned,
+            double = 1., unsigned = 0);
+  Schedule (const row_t&);
 
   // getters
-  bool isEmpty (void) const {return empty_schedule;}
+  bool isEmpty (void) const {return (n_assigned_GPUs == 0);}
   //
+  unsigned get_iter (void) const {return iter;}
   double get_startTime (void) const {return start_time;}
   double get_completionPercent (void) const {return completion_percent;}
   double get_cP_step (void) const {return completion_percent_step;}
   double get_simTime (void) const {return sim_time;}
+  double get_executionTime (void) const {return execution_time;}
   double get_tardiness (void) const {return tardiness;}
-  double get_vmCost (void) const {return vmCost;}
+  double get_GPUcost (void) const {return GPUcost;}
   double get_tardinessCost (void) const {return tardinessCost;}
   //
-  const Setup& get_setup (void) const;
-  double get_selectedTime (void) const;
-  unsigned get_node_idx (void) const;
+  double get_selectedTime (void) const {return selected_time;}
+  const std::string& get_nodeID (void) const {return node_ID;}
+  const std::string& get_GPUtype (void) const {return GPUtype;}
+  unsigned get_nGPUs (void) const {return n_assigned_GPUs;}
+  double get_GPUf (void) const {return assigned_GPU_f;}
+  unsigned get_GPUID (void) const {return shared_GPU_ID;}
+  double get_prevGPUf (void) const {return previous_GPU_f;}
 
   // setters
   void set_iter (unsigned it) {iter = it;}
@@ -79,34 +77,64 @@ public:
   void set_finishTime (double ft) {finish_time = ft;}
   void set_tardiness (double t);
   void set_startTime (double st) {start_time = st;}
-  void compute_vmCost (unsigned);
+  
+  /* compute_GPUcost
+  *
+  *   Input:    unsigned              number of used GPUs in the node
+  *             double                energy cost of the GPU
+  */
+  void compute_GPUcost (unsigned, double);
+
+  /* compute_tardinessCost
+  *
+  *   Input:    double                tardiness weight
+  */
   void compute_tardinessCost (double);
-  void change_setup (setup_time_t::const_iterator stp) {csetup = stp;}
-  void change_node (unsigned idx) {node_idx = idx;}
-
-  /*  print_names (static)
+  
+  /* change_configuration
   *
-  *   Input:  std::ostream&       where to print names of fields stored in the 
-  *                               class
-  *           char endline='\n'   last character to be printed (default \n)
+  *   Input:    const std::string&    selected node ID
+  *             const std::string&    selected GPU type
+  *             double                expected execution time
+  *             unsigned              number of assigned GPUs
+  *             double                assigned GPU fraction
   */
-  static void print_names (std::ostream& ofs, char endline = '\n');
+  void change_configuration (const std::string&, const std::string&, 
+                             double, unsigned, double = 1., unsigned = 0);
 
-  /*  print
+  /* change_configuration
   *
-  *   Input:  const Job&                job associated to this schedule
-  *           const std::vector<Node>&  vector of open nodes
-  *           std::ostream&             where to print
-  *           char endline='\n'         last character to be printed
+  *   Input:    double                expected execution time
+  *             unsigned              number of assigned GPUs
   */
-  void print (const Job&, const std::vector<Node>&, std::ostream&, 
-              char endline = '\n') const;
+  void change_configuration (double, unsigned);
+
+  /* change_configuration
+  *
+  *   Input:    double                expected execution time
+  *             double                assigned GPU fraction
+  *		double		      previous assigned GPU fraction
+  */
+  void change_configuration (double, double, double);
+
+
+  /* print_names (static)
+  *
+  *   Input:  std::ostream&       where to print names of information
+  *                               stored in the class
+  *           char                last character to be printed (default \n)
+  */
+  static void print_names (std::ostream& ofs, char = '\n');
+
+  /* print
+  *
+  *   Input:  const Job&          job that the schedule is associated to
+  *           std::ostream&       where to print information stored in the 
+  *                               schedule
+  *           char                last character to be printed (default \n)
+  */
+  void print (const Job&, std::ostream&, char = '\n') const;
+  
 };
-
-// operator== and operator!=  two schedules are equal if the corresponding 
-//                            setups are equal and they have the same number 
-//                            of GPUs
-bool operator== (const Schedule&, const Schedule&);
-bool operator!= (const Schedule&, const Schedule&);
 
 #endif /* SCHEDULE_HH */

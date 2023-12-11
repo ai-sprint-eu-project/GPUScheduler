@@ -1,24 +1,22 @@
-// Copyright 2020-2021 Federica Filippini
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 #include "EDF.hpp"
 
-EDF::EDF (const std::string& directory, const std::string& file_jobs, 
-          const std::string& file_times, const std::string& file_nodes):
-  First_principle_methods(directory, file_jobs, file_times, file_nodes)
+template <typename COMP>
+EDF<COMP>::EDF (const System& s, const obj_function_t& pf, unsigned l):
+  First_principle_methods<COMP>(s, pf, l)
 {}
 
-bool
-EDF::compare (const Job& j1, const Job& j2)
+template <typename COMP>
+void
+EDF<COMP>::sort_jobs_list (void)
 {
-  return j1.get_deadline() < j2.get_deadline();
+  // sort list
+  std::list<Job>& submitted_jobs = this->system.get_submittedJobs();
+  submitted_jobs.sort(compare_deadline);
 }
+
+
+/*
+* specializations of template classes
+*/
+template class EDF<std::less<double>>;
+template class EDF<std::greater<double>>;

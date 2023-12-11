@@ -1,108 +1,79 @@
-// Copyright 2020-2021 Federica Filippini
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 #ifndef NODE_HH
 #define NODE_HH
 
 #include <ostream>
-#include <cassert>
 
 #include "utilities.hpp"
-#include "setup.hpp"
-#include "configuration.hpp"
 
 class Node {
 
 public:
-  // friend operator==
-  friend bool operator== (const Node&, const Node&);
+  // friend operator<
+  friend bool operator< (const Node&, const Node&);
 
 private:
   std::string ID = "";
+  std::string GPUtype = "";
+  unsigned nGPUs = 0;
+  double cost = 0.0;
 
-  bool isOpen = false;
-  Configuration c;
+  unsigned n_remainingGPUs = 0;
+
+  double GPU_f = 0.0;
+  unsigned GPU_ID = 0;
 
 public:
   /*  constructor
   *
-  *   Input(1):  void              default
+  *   Input(1):  void                 default
   *
-  *   Input(2):  const row_t&      list of elements used to initialize all the
-  *                                class members (see utilities.hpp to inspect
-  *                                row_t type)
+  *   Input(2):  const row_t&         list of elements used to initialize all 
+  *                                   the class members (see utilities.hpp to 
+  *                                   inspect row_t type)
+  *
+  *   Input(3):  const std::string&   ID
+  *              const std::string&   GPU type
+  *              unsigned             number of GPUs
+  *              double               fraction of GPU (default = "1")
+  *              unsigned             GPU ID (default = "0")
   */
   Node (void) = default;
-  Node (const row_t& id): ID(*(id.cbegin())) {}
+  Node (const row_t&);
+  Node (const std::string&, const std::string&, unsigned, double, unsigned);
 
   // getters
   const std::string& get_ID (void) const {return ID;}
-  const std::string& get_VMtype (void) const;
-  const std::string& get_GPUtype (void) const;
-  double get_cost (void) const; 
+  const std::string& get_GPUtype (void) const {return GPUtype;}
+  unsigned get_nGPUs (void) const {return nGPUs;}
+  double get_cost (void) const {return cost;}
+  double get_GPUf (void) const {return GPU_f;}
+  unsigned get_GPUID (void) const {return GPU_ID;}
   unsigned get_usedGPUs (void) const;
   unsigned get_remainingGPUs (void) const;
-  bool open (void) const;
+  bool isOpen (void) const;
 
   // setters
-  void set_remainingGPUs (int);
-  void change_setup (const Setup&);
-
-  /*  open_node
-  *     changes state of node and assigns the given configuration
-  *
-  *   Input:  const Setup&        Setup to be assigned to node
-  */
-  void open_node (const Setup&);
-
-  /*  close_node
-  *     changes the state of node and deletes the current configuration
-  */
-  void close_node (void);
+  void set_remainingGPUs (unsigned);
+  void free_GPUs (unsigned);
 
   /*  print_names (static)
   *
-  *   Input:  std::ostream&       where to print names (namely "Nodes") of 
-  *                               fields stored in the class
-  *           char endline='\n'   last character to be printed (default \n)
+  *   Input:  std::ostream&       where to print names of information 
+  *                               stored in the class
+  *           char                last character to be printed (default '\n')
   */
-  static void print_names (std::ostream&, char endline='\n');
+  static void print_names (std::ostream&, char = '\n');
 
   /*  print
   *
-  *   Input:  std::ostream&       where to print node ID
-  *           char endline='\n'   last character to be printed (default \n)
+  *   Input:  std::ostream&       where to print information about the node
+  *           char                last character to be printed (default '\n')
   */
-  void print (std::ostream&, char endline='\n') const;
+  void print (std::ostream&, char = '\n') const;
 
-  /*  print_open_node
-  *
-  *   Input:  std::ostream&       where to print node ID and current
-  *                               configuration
-  */
-  void print_open_node (std::ostream&) const;
 };
 
-// operator==   two nodes are equal if they have the same ID
-bool operator== (const Node&, const Node&);
-
-// specialization of the hash function
-namespace std {    
-  template<>
-  struct hash<Node> {
-    std::size_t operator() (const Node& n) const {
-        return std::hash<std::string>() (n.get_ID());
-    }
-  };
-}
+// operator<    n1 < n2 if n1.n_remainingGPUs < n2.n_remainingGPUs
+bool operator< (const Node&, const Node&);
 
 #endif /* NODE_HH */

@@ -1,19 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Copyright 2020-2021 Federica Filippini
+Created on Fri Sep 18 14:40:02 2020
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+@author: federicafilippini
 """
 
 import os
@@ -25,9 +15,9 @@ import matplotlib.colors as colors
 import matplotlib.cm as cmx
 from matplotlib.font_manager import FontProperties
 #
-from generate_data_new import generate_df_times
-from generate_data_new import generate_custom_submissions
-from generate_data_new import generate_submissions
+from generate_data import generate_df_times
+from generate_data import generate_custom_submissions
+from generate_data import generate_submissions
 
 
 def createFolder (directory):
@@ -124,7 +114,9 @@ def plot_submissions_in_range (arrivals, H = 3600, title = ""):
 
 def cfr_submissions (arrivals_dict, H = 3600, title = ""):
     # all distributions
-    all_distributions = {"high": 0, "mixed": 3, "low": 1, "exponential_75000": 2}
+    all_distributions = list(arrivals_dict.keys())
+    idxs = list(range(len(all_distributions)))
+    all_distributions = dict(zip(all_distributions, idxs))
     # define colormap
     cmap = plt.get_cmap("Set1")
     # plot
@@ -158,7 +150,11 @@ def cfr_submissions (arrivals_dict, H = 3600, title = ""):
     plt.xlabel("Time [h]", fontsize=16)
     plt.ylabel("Number of submitted jobs", fontsize=16)
     plt.title(title)
-    plt.show()
+    if plot_path == "":
+        plt.show()
+    else:
+        fig1.savefig(plot_path + ".pdf", format='pdf', dpi=1000, bbox_inches = "tight")
+        plt.close(fig1)
 
 
 def plot_data (nN, nJ, myseed, possible_distributions, possible_lambdas, 
@@ -167,20 +163,29 @@ def plot_data (nN, nJ, myseed, possible_distributions, possible_lambdas,
     # set seed to control random number generation and job selection
     np.random.seed(myseed)
     
-    # load data from data.csv
-    #
-    # df_data = ["Application", "Images", "Epochs", "Batchsize", "Jobs", 
-    #            "GpuType", "GpuNumber", "ExecutionTime", "min", "max"]
-    data_file = "./build/data/data_2d10d_filtered.csv"
-    df_data = pd.read_csv(data_file)
-
-    # load costs information from GPU-cost.csv
-    #
-    # df_costs = ["VMType", "GpuType", "GpuNumber", "cost"]
+    # load data and costs
     if scenario == "datacenter":
+        # ["Application","Images","Epochs","Batchsize","Jobs","GpuType",
+        #  "GpuNumber","ExecutionTime","min","max"]
+        data_filename = "data_2d10d_filtered.csv"
+        # ["GPUtype","nGPUs","PowerConsumption[W]","EnergyCost[€/kWh]",
+        #  "PUE","cost"]
         cost_filename = "GPU-cost_server.csv"
-    else:
+    elif scenario == "regular":
+        # ["Application","Images","Epochs","Batchsize","Jobs","GpuType",
+        #  "GpuNumber","ExecutionTime","min","max"]
+        data_filename = "data_2d10d_filtered.csv"
+        # ["GPUtype","nGPUs","cost"]
         cost_filename = "GPU-cost.csv"
+    else:
+        # ["Jobs","Application","Epochs","Batchsize","GpuType","GpuNumber",
+        #  "TimePerEpoch","ExecutionTime"]
+        data_filename = "data_server.csv"
+        # ["GPUtype","nGPUs","PowerConsumption[W]","EnergyCost[€/kWh]",
+        #  "PUE","cost"]
+        cost_filename = "GPU-cost_server_4-2.csv"
+    data_file = "./build/data/" + data_filename
+    df_data = pd.read_csv(data_file)
     costs_file = "./build/data/" + cost_filename
     df_costs = pd.read_csv(costs_file)
 
@@ -210,9 +215,9 @@ def plot_data (nN, nJ, myseed, possible_distributions, possible_lambdas,
     #                                                 selected_jobs, 
     #                                                 negl_types)
     #     plot_times_by_nGPU(df_times_dict[gputype], title=gputype)
-    df_times = generate_df_times(df_data, df_costs, selected_jobs, 
-                                  neglected_types = ["Quadro P600", 
-                                                     "GTX 1080Ti"])
+    df_times = generate_df_times(df_data, selected_jobs, 
+                                 neglected_types = ["Quadro P600", 
+                                                    "GTX 1080Ti"])
     
     # generate submission times of all selected jobs
     SubmissionTimes_dict = {}
@@ -237,11 +242,12 @@ if __name__ == "__main__":
     nJ           = int(sys.argv[2])
     myseed       = int(sys.argv[3])
     scenario     = sys.argv[4]
+    plot_path    = sys.argv[5]
     
+    possible_lambdas = [75000]
     possible_distributions = {"standard": ["exponential"],
                               "custom": ["low", "high", "mixed"]}
-    possible_scenarios     = ["regular", "datacenter"]
-    possible_lambdas       = [75000] #[30000, 75000, 150000]
+    possible_scenarios = ["regular", "datacenter", "ANDREAS"]
     
     if (nN == 0 or nJ == 0 or scenario not in possible_scenarios):
         print("Sorry!! the inputs are not valuable. Data generation failed.")

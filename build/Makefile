@@ -1,12 +1,26 @@
 HPATH = ../include
 SPATH = ../src
 SSYS ?= false
-CXXFLAGS += -O3 -Wall -std=c++11
-CPPFLAGS += -I$(HPATH) -I$(SPATH)
+ROOT_RESTC ?= /home/lorenzo/restc-cpp
+BOOST_INC_PATH ?= ${mkBoostInc}
+BOOST_LIB_PATH ?= ${mkBoostLib}
+CXXFLAGS += -O3 -std=c++14
+CPPFLAGS += -I$(HPATH) -I$(SPATH) -I$(ROOT_RESTC)/include \
+	-I$(ROOT_RESTC)/dbuild/generated-include \
+	-I$(BOOST_INC_PATH) \
+	-I$(ROOT_RESTC)/dbuild/external-projects/src/externalRapidJson/include
 ifeq ($(SSYS),true)
 	CPPFLAGS += -DSMALL_SYSTEM
 endif
 VPATH = $(HPATH) $(SPATH)
+LDFLAGS = -L$(ROOT_RESTC)/lib -DBOOST_COROUTINE_NO_DEPRECATION_WARNING -L$(BOOST_LIB_PATH)
+LIBS = -lrestc-cpp -lz -lssl -lcrypto -lpthread \
+        -lboost_system -lboost_program_options \
+        -lboost_filesystem -lboost_date_time \
+        -lboost_context -lboost_coroutine \
+        -lboost_chrono -lboost_log -lboost_thread \
+        -lboost_log_setup -lboost_regex \
+        -lboost_atomic -lpthread
 
 SRCS=$(patsubst $(SPATH)/%.cpp, %.cpp, $(wildcard $(SPATH)/*.cpp))
 OBJS = $(SRCS:.cpp=.o)
@@ -30,7 +44,7 @@ dep: $(SPATH)
 	done
 
 $(EXE): main.o $(OBJS)
-	$(CXX) $(CXXFLAGS) $^ -o $@
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ -o $@ $(LIBS)
 
 run:
 	@./$(EXE) $(ARGS)

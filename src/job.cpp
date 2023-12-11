@@ -1,58 +1,54 @@
-// Copyright 2020-2021 Federica Filippini
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 #include "job.hpp"
 
 Job::Job (const row_t& info)
 {
-  typename row_t::const_iterator it = info.cbegin();
-  for (unsigned k=0; k<job_info.size(); ++k)
-    job_info[k] = *it++;
+  ID = info[0];
+  submissionTime = info[1].empty() ? NaN : std::stod(info[1]);
+  deadline = info[2].empty() ? NaN : std::stod(info[2]);
+  tardinessWeight = info[3].empty() ? NaN : std::stod(info[3]);
+  minExecutionTime = info[4].empty() ? NaN : std::stod(info[4]);
+  maxExecutionTime = info[5].empty() ? NaN : std::stod(info[5]);
+  ratio_avg = info[6].empty() ? NaN : std::stod(info[6]);
 
-  for (unsigned k=0; k<time_info.size(); ++k)
-    time_info[k] = std::stod(*it++);
+  if (info.size() == 9)
+  {
+    max_epochs = info[7].empty() ? NaN : std::stod(info[7]);
+    distribution = info[8];
+  }
 
-  pressure = time_info[3] - time_info[1];
+  pressure = minExecutionTime - deadline;
+  pressure = pressure <= 0 ? pressure : pressure * tardinessWeight;
+  // pressure = -deadline;
+  // pressure = -submissionTime;
 }
 
 void
 Job::update_pressure (double current_time)
 {
   // pressure = min_exec_time + current_time - deadline
-  pressure = time_info[3] + current_time - time_info[1];
+  pressure = minExecutionTime + current_time - deadline;
+  pressure = pressure <= 0 ? pressure : pressure * tardinessWeight;
 }
 
 void 
 Job::print (std::ostream& ofs, char endline) const
 {
-  for (unsigned j=0; j<job_info.size(); ++j)
-    ofs << job_info[j] << ",";
-  
-  for (unsigned j=0; j<time_info.size(); ++j)
-    ofs << time_info[j] << ((j<time_info.size()-1) ? ',' : endline);
+  ofs << ID << "," << submissionTime << "," << deadline << "," 
+      << tardinessWeight << "," << minExecutionTime << "," 
+      << maxExecutionTime << endline;
 }
 
 void
 Job::print_names (std::ostream& ofs, char endline)
 {
-  ofs << "Application,Images,Epochs,Batchsize,Jobs,UniqueJobsID,"
-      << "SubmissionTime,Deadline,Tardinessweight,MinExecTime,MaxExecTime"
-      << endline;
+  ofs << "UniqueJobsID,SubmissionTime,Deadline,TardinessWeight,MinExecTime,"
+      << "MaxExecTime" << endline;
 }
 
 bool
 operator== (const Job& j1, const Job& j2)
 {
-  return (j1.job_info[5] == j2.job_info[5]);
+  return (j1.ID == j2.ID);
 }
 
 bool
@@ -62,7 +58,25 @@ operator!= (const Job& j1, const Job& j2)
 }
 
 bool
-operator< (const Job& j1, const Job& j2)
+compare_pressure (const Job& j1, const Job& j2)
 {
-  return (j1.pressure < j2.pressure);
+  return j1.pressure > j2.pressure;
+}
+
+bool
+compare_submissionTime (const Job& j1, const Job& j2)
+{
+  return j1.submissionTime < j2.submissionTime;
+}
+
+bool
+compare_tardinessWeight (const Job& j1, const Job& j2)
+{
+  return j1.tardinessWeight > j2.tardinessWeight;
+}
+
+bool
+compare_deadline (const Job& j1, const Job& j2)
+{
+  return j1.deadline < j2.deadline;
 }

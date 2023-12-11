@@ -1,25 +1,19 @@
-"""
-Copyright 2020-2021 Federica Filippini
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-"""
-
 import sys
 import os
+import ast
+import configparser as cp
 import argparse
 import csv
 import logging
 import collections
+
+
+def createFolder (directory):
+    try:
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+    except OSError:
+        print ("Error: Creating directory. " +  directory)
 
 
 def recursivedict():
@@ -31,6 +25,8 @@ def main ():
     parser = argparse.ArgumentParser(description="Compute averages of random methods")
 
     parser.add_argument("results_directory", help="The directory containing the folders with the results to be processed")
+    parser.add_argument('-c', "--config", help="Configuration file", 
+                        default="config.ini")
     parser.add_argument('-d', "--debug", help="Enable debug messages", 
                         default=False, action="store_true")
     parser.add_argument('-o', "--output", 
@@ -50,14 +46,24 @@ def main ():
 
     ##########################################################################
 
+    ## configuration parameters
+    config = cp.ConfigParser()
+    config.read(args.config)
+
+    # methods
+    existing_heuristics = ast.literal_eval(config['Methods']['existing_heuristics'])
+    existing_random = ast.literal_eval(config['Methods']['existing_random'])
+
+    ##########################################################################
+
     sim_times = recursivedict()
 
     found_methods = set()
-
+    
     for content in os.listdir(args.results_directory):
         combined_path = os.path.join(args.results_directory, content)
         if os.path.isdir(combined_path):
-            if not content.startswith("1-"):
+            if not content.startswith("call_1-"):
                 continue
             tokens = content.split("-")
             nodes = tokens[1]
@@ -67,32 +73,42 @@ def main ():
             lambdaa = tokens[5]
             for res_dir in os.listdir(combined_path):
                 res_path = os.path.join(combined_path, res_dir)
-                if not os.path.isdir(res_path) or not res_dir.startswith("result"):
+                if not os.path.isdir(res_path):
                     continue
-                tokens = res_dir.split("_")
-                delta = tokens[1]
-                
+                if not res_dir.startswith("result"):
+                    continue
+
+                logging.debug("Examining %s", str(res_dir))
+
                 for file in os.listdir(res_path):
-                    if os.path.isdir(file) or not file.startswith("cost-"):
+                    if os.path.isdir(file):
                         continue
-                    tokens = file.split("-")[1]
-                    if "_" in tokens:
-                        tokens = tokens.split("_")
-                        method = tokens[0]
-                        cppseed = tokens[1].replace(".csv", "")
+                    if not "schedule" in file:
+                        continue
+
+                    tokens = file.split("_")
+                    method = tokens[0]
+                    if method not in existing_heuristics and \
+                        method not in existing_random:
+                        continue
+                    if method in existing_random:
+                        cppseed = tokens[2][:-4]
                     else:
-                        method = tokens.replace(".csv", "")
                         cppseed = seed
-                        logging.debug("Examining %s", str(method + "-" + 
-                                                          cppseed))
-                        time_data = csv.reader(open(os.path.join(res_path, 
-                                                                 file), "r"))
-                        time_list = list(time_data)
-                        sim_time = float(time_list[-1][1])
-                        experiment = (method, nodes, jobs, lambdaa, delta, 
-                                      distribution, seed)
-                        found_methods.add(method)
-                        sim_times[experiment][cppseed] = sim_time
+
+                    logging.debug("Examining %s", str(method+"-"+cppseed))
+
+                    schedule = csv.reader(open(os.path.join(res_path, file), 
+                                               "r"))
+
+                    rows = list(schedule)
+                    sim_time = float(rows[-1][1])
+
+                    experiment = (method, nodes, jobs, lambdaa, distribution, 
+                                  seed)
+                    found_methods.add(method)
+
+                    sim_times[experiment][cppseed] = sim_time / 3600
 
     logging.debug("Found methods %s", str(found_methods))
 
@@ -100,15 +116,22 @@ def main ():
         logging.error("No cpp result found")
         sys.exit(1)
 
+    if (args.results_directory).split("/")[-1] == "results":
+        basedir = "/".join((args.results_directory).split("/")[:-1])
+    else:
+        basedir = args.results_directory
+    results_folder = os.path.join(basedir, "csv")
+    createFolder(results_folder)
+
     results_file_name = "sim_times" + args.output + ".csv"
-    results_file = open(results_file_name, "w")
-    results_file.write("Method, Nodes, Jobs, Lambda, Delta, Distribution, ")
-    results_file.write("Seed, CppSeed, sim_time\n")
+    results_file = open(os.path.join(results_folder,results_file_name), "w")
+    results_file.write("Method,Nodes,Jobs,Lambda,Distribution,Seed,CppSeed,")
+    results_file.write("sim_time\n")
 
     averages_file_name = "sim_times_averaged" + args.output + ".csv"
-    averages_file = open(averages_file_name, "w")
-    averages_file.write("Method, Nodes, Jobs, Lambda, Delta, Distribution, ")
-    averages_file.write("Seed, sim_time\n")
+    averages_file = open(os.path.join(results_folder,averages_file_name), "w")
+    averages_file.write("Method,Nodes,Jobs,Lambda,Distribution,Seed,sim_time")
+    averages_file.write("\n")
 
     for experiment in sorted(sim_times):
         logging.debug("Examining %s", str(experiment))
@@ -126,7 +149,7 @@ def main ():
                 results_file.write("," + str(cppseed) +\
                                    "," + str(results[cppseed]) + "\n")
             else:
-                results_file.write(",,,,,,," + str(cppseed) +\
+                results_file.write(",,,,,," + str(cppseed) +\
                                    "," + str(results[cppseed]) + "\n")
             average += results[cppseed]
             ncppseed += 1

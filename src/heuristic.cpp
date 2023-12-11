@@ -1,473 +1,434 @@
-// Copyright 2020-2021 Federica Filippini
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 #include "heuristic.hpp"
 
-Heuristic::Heuristic (const std::string& dir, const std::string& file_jobs, 
-                      const std::string& file_times, 
-                      const std::string& file_nodes)
-{
-  #ifdef SMALL_SYSTEM
-    verbose = 2;
-  #endif
+template <typename COMP>
+Heuristic<COMP>::Heuristic (const System& s, const obj_function_t& pf,
+                            unsigned l):
+  system(s), proxy_function(pf), level(l)
+{}
 
-  directory = dir + "/";
-  if (verbose > 0)
-    std::cout << "--- loading jobs list." << std::endl;
-  create_container(jobs, directory + "../" + file_jobs);
-  if (verbose > 0)
-    std::cout << "--- loading time table." << std::endl;
-  create_map(ttime, directory + "../"  + file_times);
-  if (verbose > 0)
-    std::cout << "--- loading nodes list." << std::endl;
-  create_container(nodes, directory + "../"  + file_nodes);
-}
-
-std::string
-Heuristic::prepare_logging (void) const
-{
-  std::string new_base = "";
-  for (unsigned j = 0; j < level; ++j)
-    new_base += "\t";
-  return new_base;
-}
-
-double
-Heuristic::submit_job (double elapsed_time)
-{
-  std::string base = "";
-  if (verbose > 0)
-  {
-    base = prepare_logging();
-    std::cout << base << "--- job submission." << std::endl;
-  }
-  double t = INF;
-  if (! jobs.empty())
-  {
-    t = jobs.front().get_submissionTime();
-    if (verbose > 1)
-      std::cout << base << "\tt = " << t << " <? " << (current_time + elapsed_time);
-    if (t <= (current_time + elapsed_time + TOL))
-    {
-      submitted_jobs.push_back(jobs.front());
-      jobs.pop_front();
-      if (verbose > 1)
-        std::cout << base << " ---> SUBMITTED";
-    }
-    if (verbose > 1)
-      std::cout << std::endl;
-  }
-  return t;
-}
-
+template <typename COMP>
 void
-Heuristic::remove_ended_jobs (void)
+Heuristic<COMP>::sort_jobs_list (void)
+{
+  // sort list
+  std::list<Job>& submitted_jobs = system.get_submittedJobs();
+  submitted_jobs.sort(compare_pressure);
+}
+
+template <typename COMP>
+bool
+Heuristic<COMP>::available_resources (void) const
+{
+  unsigned n_nodes = system.get_n_nodes();
+  unsigned n_full_nodes = system.get_n_full_nodes();
+  bool avail = (n_full_nodes < n_nodes);
+  if (verbose > 2)
+  {
+    std::string base = prepare_logging(level);
+    std::cout << base << "\t\tn_full_nodes = " << n_full_nodes
+              << "; n_nodes = " << n_nodes << " --> "
+              << (avail ? "AVAIL" : "NOT AVAIL")
+              << std::endl;
+  }
+  return avail;
+}
+
+template <typename COMP>
+void
+Heuristic<COMP>::close_nodes (void)
+{
+  system.close_nodes();
+}
+
+template <typename COMP>
+bool
+Heuristic<COMP>::assign (const Job& j, 
+                            setup_time_t::const_iterator best_stp_it,
+                            job_schedule_t& new_schedule)
+{
+  bool assigned = false;
+  const std::string& required_GPUtype = std::get<0>(best_stp_it->first);
+  unsigned required_GPUs = std::get<1>(best_stp_it->first);
+  double required_GPU_f = std::get<2>(best_stp_it->first);
+
+  // find a node with the required GPU type and update its number of
+  // available GPUs if possible
+  std::string node_ID = system.assign_to_node(required_GPUtype, required_GPUs,
+                                              required_GPU_f);
+
+  // if such a node exists, perform the assignment
+  if (! node_ID.empty())
+  {
+    unsigned GPU_ID = 0;
+    // if opt config is fractionary, split ID in node_ID and GPU_ID
+    if (required_GPU_f < 1)
+    {
+      GPU_ID = std::stoi(node_ID.substr(node_ID.find("_") + 1));
+      node_ID.erase(node_ID.find("_"));
+    }
+
+    if (this->verbose > 1)
+    {
+      std::string base = prepare_logging(this->level);
+      std::cout << base << "\t\t\t---> ASSIGNED to " << node_ID << std::endl;
+    }
+
+    assigned = true;
+    Schedule sch(node_ID, required_GPUtype, best_stp_it->second, 
+                 required_GPUs, required_GPU_f, GPU_ID);
+    new_schedule[j] = sch;
+  }
+
+  return assigned;
+}
+
+template <typename COMP>
+unsigned
+Heuristic<COMP>::scheduling_step (job_schedule_t& new_schedule)
+{
+  // print info
+  std::string base = "";
+  if (verbose > 0)
+  {
+    base = prepare_logging(level);
+    std::cout << base << "--- scheduling step." << std::endl;
+  }
+
+  // initialize number of assigned jobs
+  unsigned n_assigned_jobs = 0;
+
+  // loop over the submitted jobs...
+  const std::list<Job>& submitted_jobs = system.get_submittedJobs();
+  std::string queue = "";
+  bool resources = available_resources();
+  for (const Job& j : submitted_jobs)
+  {
+    queue += (j.get_ID() + "; ");
+    if (verbose > 1)
+    {
+      std::cout << base << "\n\tanalyzing job...";
+      j.print(std::cout);
+    }
+
+    // ...and perform assignment until resources are available
+    if (resources)
+    {
+      n_assigned_jobs += perform_assignment(j, new_schedule);
+      resources = available_resources();
+    }
+    else
+      new_schedule[j] = Schedule();
+  }
+
+  this->postprocessing(new_schedule);
+
+  // print info
+  if (verbose > 0)
+  {
+    std::cout << base << "\tn_submitted_jobs: " << submitted_jobs.size()
+              << "; n_assigned_jobs: " << n_assigned_jobs;
+    if (verbose > 1)
+      std::cout << "; queue: " << queue;
+    std::cout << std::endl;
+  }
+
+  return n_assigned_jobs;
+}
+
+template <typename COMP>
+void
+Heuristic<COMP>::postprocessing (job_schedule_t& current_schedule)
 {
   std::string base = "";
   if (verbose > 0)
   {
-    base = prepare_logging();
-    std::cout << base << "--- remove ended jobs." << std::endl;
+    base = prepare_logging(level);
+    std::cout << base << "--- postprocessing step." << std::endl;
   }
-  unsigned last_iter = scheduled_jobs.size() - 1;
-  job_schedule_t& last_schedule = scheduled_jobs[last_iter];
 
-  job_schedule_t::const_iterator cit;
-  for (cit = last_schedule.cbegin(); cit != last_schedule.cend(); ++cit)
+  // get time table
+  time_table_ptr ttime = system.get_ttime();
+
+  // highest speed-up pair
+  using best_speedup_t = std::pair<job_schedule_t::iterator,
+                                   setup_time_t::const_iterator>;
+  best_speedup_t best_speedup = {current_schedule.end(),
+                                 (ttime->cbegin())->second.cend()};
+  double previous_delta = 0.;
+
+  bool single_job = false;
+
+  // get shared GPUs map and iterate over it
+  gpus_map_t& gmap = system.get_nodes().get_shared_gpus();
+  gpus_map_t& full_gmap = system.get_nodes().get_full_shared_gpus();
+
+  for (gpus_map_t::iterator it1 = gmap.begin(); it1 != gmap.end(); ++it1)
   {
-    const Job& j = cit->first;
-    const Schedule& sch = cit->second;
-
-    if (sch.get_completionPercent() >= (100-TOL))
+    const std::string& GPUtype = it1->first;
+    gpus_t& glist = it1->second;
+    for (gpus_t::iterator it2 = glist.begin(); it2 != glist.end(); ++it2)
     {
-      std::list<Job>::iterator it;
-      bool found = false;
-      for (it=submitted_jobs.begin(); it!=submitted_jobs.end() && !found; 
-           ++it)
+      double remaining_f = std::get<0>(*it2);
+      const std::string& node_ID = std::get<1>(*it2);
+      unsigned GPU_ID = std::get<2>(*it2);
+
+      do
       {
-        if (*it == j)
+        previous_delta = 0.;
+        single_job = false;
+
+        // loop over the current schedule
+        for (job_schedule_t::iterator schit = current_schedule.begin();
+             schit != current_schedule.end(); ++schit)
         {
-          found = true;
-          submitted_jobs.erase(it);
+          const Job& j = schit->first;
+          Schedule& sch = schit->second;
+
+          // if job is executed on the current shared GPU
+          if (sch.get_nodeID() == node_ID && sch.get_GPUID() == GPU_ID)
+          {
+            const setup_time_t& tjvg = ttime->at(j.get_ID());
+
+            // determine the job that would get the highest speed-up by getting
+            // the additional resources
+            double f = sch.get_GPUf() + remaining_f;
+            setup_time_t::const_iterator stp_it =
+                          tjvg.find(std::make_tuple(GPUtype,1,sch.get_GPUf()));
+            if (stp_it != tjvg.cend())
+            {
+              double selected_time = stp_it->second;
+              ++stp_it;
+              while (stp_it != tjvg.cend() && std::get<1>(stp_it->first) == 1 &&
+                     std::get<2>(stp_it->first) <= f)
+              {
+                double delta = selected_time - stp_it->second;
+                if (delta > previous_delta)
+                {
+                  previous_delta = delta;
+                  best_speedup = {schit, stp_it};
+                  if (std::get<2>(stp_it->first) == 1.)
+                    single_job = true;
+                }
+                ++stp_it;
+              }
+            }
+          }
+
+          if (single_job)
+            break;
+        }
+
+        // assign the additional resources to the job with highest speed-up
+        if (previous_delta > 0.)
+        {
+          // find the job in the current schedule
+          job_schedule_t::iterator schit = best_speedup.first;
+          setup_time_t::const_iterator new_stp_it = best_speedup.second;
+
+          if (schit != current_schedule.end())
+          {
+            // determine the previous schedule and configuration
+            Schedule& sch = schit->second;
+            double previous_f = sch.get_GPUf();
+
+            // get the new setup
+            const setup_t& new_stp = new_stp_it->first;
+            double new_time = new_stp_it->second;
+            double new_f = std::get<2>(new_stp);
+
+            // update the configuration
+            remaining_f += previous_f - new_f;
+            sch.change_configuration(new_time, new_f, previous_f);
+          }
+        }
+      }
+      while(previous_delta > 0. && remaining_f > 0.);
+
+      if (remaining_f > 0.)
+      {
+        std::get<0>(*it2) = remaining_f;
+        glist.sort();
+      }
+      else
+      {
+        gpus_t::iterator it = it2--;
+        gpu_t GPU = *it;
+        glist.erase(it);
+        if (! single_job)
+          full_gmap[GPUtype].push_back(GPU);
+      }
+    }
+  }
+}
+
+/*
+template <typename COMP>
+void
+Heuristic<COMP>::postprocessing (job_schedule_t& current_schedule)
+{
+  std::string base = "";
+  if (verbose > 0)
+  {
+    base = prepare_logging(level);
+    std::cout << base << "--- postprocessing step." << std::endl;
+  }
+
+  // get time table
+  time_table_ptr ttime = system.get_ttime();
+
+  // highest speed-up pair
+  using best_speedup_t = std::pair<job_schedule_t::iterator, 
+                                   setup_time_t::const_iterator>;
+  best_speedup_t best_speedup = {current_schedule.end(), 
+                                 (ttime->cbegin())->second.cend()};
+  double previous_delta = 0.;
+
+  // loop over the current schedule
+  for (job_schedule_t::iterator schit = current_schedule.begin();
+       schit != current_schedule.end(); ++schit)
+  {
+    const Job& j = schit->first;
+    Schedule& sch = schit->second;
+    const setup_time_t& tjvg = ttime->at(j.get_ID());
+
+    // if the schedule is not empty
+    if (! sch.isEmpty())
+    {
+      const std::string& nodeID = sch.get_nodeID();
+      const std::string& GPUtype = sch.get_GPUtype();
+
+      // get the number of available GPUs
+      unsigned remaining_GPUs = system.get_remainingGPUs(GPUtype, nodeID);
+
+      // if the node is not full
+      if (remaining_GPUs > 0)
+      {
+        // determine the job that would get the highest speed-up by getting the 
+        // additional resources
+        unsigned new_g = sch.get_nGPUs() + remaining_GPUs;
+        setup_time_t::const_iterator new_stp_it = tjvg.find(std::make_tuple(GPUtype,new_g,1.));
+
+        if (new_stp_it != tjvg.cend())
+        {
+          double delta = sch.get_selectedTime() - new_stp_it->second;
+
+          if (delta > previous_delta)
+          {
+            previous_delta = delta;
+            best_speedup = {schit, new_stp_it};
+          }
         }
       }
     }
   }
-}
 
-void
-Heuristic::close_nodes (void)
-{
-  for (Node& n : nodes)
-    n.close_node();
-  last_node_idx = 0;
-}
-
-void
-Heuristic::update_execution_times (unsigned iter, double elapsed_time)
-{
-  std::string base = "";
-  if (verbose > 0)
+  // assign the additional resources to the job with highest speed-up
+  if (previous_delta > 0.)
   {
-    base = prepare_logging();
-    std::cout << base << "--- update execution times." << std::endl;
-  }
-  unsigned last_iter = scheduled_jobs.size() - 1;
-  job_schedule_t& last_schedule = scheduled_jobs[last_iter];
-
-  job_schedule_t::const_iterator schit;
-  for (schit = last_schedule.cbegin(); schit != last_schedule.cend(); ++schit)
-  { 
-    const Job& j = schit->first;
-    const Schedule& sch = schit->second;
-    double cp = sch.get_completionPercent();
-    double cp_step = sch.get_cP_step();
-    if (! sch.isEmpty() && cp < (100-TOL))
-    {
-      setup_time_t& tjvg = ttime.at(j.get_ID());
-      setup_time_t::iterator it;
-      for (it = tjvg.begin(); it != tjvg.end(); ++it)
-      {
-        double t = it->second * (100 - cp_step) / 100;
-        it->second = (t > 0) ? t : INF;
-      }
-    }
-  }
-}
-
-void
-Heuristic::update_minMax_exec_time (Job& j) const
-{
-  double min_exec_time = INF;
-  double max_exec_time = 0.;
-  const setup_time_t& tjvg = ttime.at(j.get_ID());
-  setup_time_t::const_iterator cit;
-  for (cit = tjvg.cbegin(); cit != tjvg.cend(); ++cit)
-  {
-    min_exec_time = std::min(min_exec_time, cit->second);
-    max_exec_time = std::max(max_exec_time, cit->second);
-  }
-  j.set_minExecTime(min_exec_time);
-  j.set_maxExecTime(max_exec_time);
-}
-
-bool
-Heuristic::update_scheduled_jobs (unsigned iter, double elapsed_time)
-{
-  std::string base = "";
-  if (verbose > 0)
-  {
-    base = prepare_logging();
-    std::cout << base << "--- update scheduled jobs." << std::endl;
-  }
-
-  bool all_completed = true;
-  
-  // select last schedule
-  unsigned last_iter = scheduled_jobs.size() - 1;
-  job_schedule_t& last_schedule = scheduled_jobs[last_iter];
-
-  // compute simulation time
-  double sim_time = current_time + elapsed_time;
-
-  // loop over last schedule
-  for (job_schedule_t::iterator it = last_schedule.begin();
-       it != last_schedule.end(); ++it)
-  {
-    const Job& j = it->first;
-    Schedule& sch = it->second;
+    // find the job in the current schedule
+    job_schedule_t::iterator schit = best_speedup.first;
+    setup_time_t::const_iterator new_stp_it = best_speedup.second;
     
-    if (verbose > 1)
-      std::cout << base << "\tanalyzing job... " << j.get_ID() << std::endl;
-
-    // set iteration number and simulation time
-    sch.set_iter(last_iter+1);
-    sch.set_simTime(sim_time);
-    
-    // if schedule is not empty, compute execution time, completion percent
-    // and cost of VM
-    double cp = 0.0;
-    if (! sch.isEmpty())
+    if (schit != current_schedule.end())
     {
-      sch.set_executionTime(elapsed_time);
-      cp = elapsed_time * 100 / sch.get_selectedTime();
-      sch.set_cP_step(cp);
+      // determine the previous schedule and configuration
+      Schedule& sch = schit->second;
+      unsigned previous_g = sch.get_nGPUs();
+      
+      // get the new setup
+      const setup_t& new_stp = new_stp_it->first;
+      double new_time = new_stp_it->second;
+      unsigned new_g = std::get<1>(new_stp);
 
-      // get number of used GPUs on the current node
-      unsigned node_idx = sch.get_node_idx();
-      unsigned g = nodes[node_idx].get_usedGPUs();
-
-      // compute cost of VM
-      sch.compute_vmCost(g);
-      total_vm_cost += sch.get_vmCost();
-
-      if (verbose > 1)
-        std::cout << base << "\t\texecution_time = " << elapsed_time
-                  << "; node_idx = " << node_idx << "; used_GPUs = " << g
-                  << "; vm_cost = " << sch.get_vmCost() 
-                  << "; partial cp = " << cp << std::endl;
-    }
-
-    // in all iterations after the first one, update start time and completion
-    // percent of jobs that have already been partially executed
-    if (iter > 1)
-    {
-      const job_schedule_t& previous_schedule = scheduled_jobs[last_iter-1];
-      job_schedule_t::const_iterator p_sch = previous_schedule.find(j);
-      if (p_sch != previous_schedule.cend())
-      {
-        sch.set_startTime((p_sch->second).get_startTime());
-        double prev_cp = (p_sch->second).get_completionPercent();
-        cp = prev_cp + cp * (100 - prev_cp) / 100;
-
-        if (verbose > 1)
-          std::cout << base << "\t\tpreviously running --> previous cp = "
-                    << prev_cp << "; cp = " << cp
-                    << std::endl;
-      }
-      else
-        sch.set_startTime(current_time);
-    }
-    else
-      sch.set_startTime(current_time);
-
-    // set completion percent
-    sch.set_completionPercent(cp);
-
-    // set finish time, tardiness and tardiness cost of jobs that are 
-    // completed
-    if (cp >= (100-TOL))
-    {
-      sch.set_finishTime(sim_time);
-      double tardiness = std::max(sim_time - j.get_deadline(), 0.);
-      sch.set_tardiness(tardiness);
-      sch.compute_tardinessCost(j.get_tardinessWeight());
-      total_tardi += sch.get_tardiness();
-      total_tardi_cost += sch.get_tardinessCost();
-
-      if (verbose > 1)
-        std::cout << base << "\t\ttardiness = " << tardiness
-                  << "; t_cost = " << sch.get_tardinessCost() << std::endl;
-    }
-    else
-    {
-      sch.set_tardiness(0.0);
-      all_completed = false;
+      // update the configuration
+      system.assign_to_node(sch.get_GPUtype(), new_g - previous_g, 1., false,
+                            sch.get_nodeID());
+      sch.change_configuration(new_time, new_g);
     }
   }
-
-  return all_completed;
 }
+*/
 
-double
-Heuristic::find_first_finish_time (const job_schedule_t& last_schedule) const
-{
-  double fft = INF;
-
-  job_schedule_t::const_iterator cit;
-  for (cit = last_schedule.cbegin(); cit != last_schedule.cend(); ++cit)
-    fft = std::min(fft, (cit->second).get_selectedTime());
-
-  return fft;
-}
-
+template <typename COMP>
 bool
-Heuristic::available_resources (void) const
+Heuristic<COMP>::to_be_inserted (const K_best_t& Kmap, 
+                                 typename K_best_t::iterator ub) const
 {
-  bool available = false;
-
-  // check if there are still closed nodes
-  if (last_node_idx < nodes.size())
-    available = true;
-  else
-  {
-    // loop over nodes starting from the last one, until free resources are 
-    // found
-    for (int idx = last_node_idx - 1; idx >= 0 && ! available; --idx)
-    {
-      const Node& n = nodes[idx];
-      if (n.get_remainingGPUs() > 0)
-        available = true;
-    }
-  }
-  
-  return available;
+  return (Kmap.empty() || ub != Kmap.cend());
 }
 
+template <typename COMP>
 void
-Heuristic::preprocessing (void)
+Heuristic<COMP>::restore_map_size (K_best_t& current_K_best)
+{
+  typename K_best_t::iterator it = current_K_best.end();
+  current_K_best.erase(--it);
+}
+
+template <typename COMP>
+void
+Heuristic<COMP>::update_elite_solutions (const job_schedule_t& new_schedule,
+                                         K_best_t& K_best, unsigned K)
 {
   std::string base = "";
   if (verbose > 0)
   {
-    base = prepare_logging();
-    std::cout << base << "--- preprocessing step." << std::endl;
+    base = prepare_logging(level);
+    std::cout << base << "--- update elite solutions." << std::endl;
   }
 
-  // update minimum execution time, maximum execution time and pressure of 
-  // all submitted jobs
-  std::string queue = "";
-  for (Job& j : submitted_jobs)
-  {
-    queue += (j.get_ID() + "; ");
-    update_minMax_exec_time(j);
-    j.update_pressure(current_time);
-  }
+  // initialize candidate solution
+  Solution BS(new_schedule, system.get_nodes(), current_time);
+
+  // compute the expected cost of the schedule
+  double new_total_cost = proxy_function(BS, system.get_GPUcosts(), verbose,
+                                         level+1);
 
   if (verbose > 1)
-    std::cout << base << "\tlist of submitted jobs: " << queue << std::endl;
-
-  // sort the queue
-  sort_jobs_list();
-}
-
-job_schedule_t 
-Heuristic::perform_scheduling (void)
-{
-  // (STEP #0)
-  preprocessing();
-
-  // compute best schedule
-  job_schedule_t best_schedule;
-  scheduling_step(best_schedule);
-
-  #ifdef SMALL_SYSTEM
-    double fft = find_first_finish_time(best_schedule);
-    double minTotalCost = objective_function(best_schedule, fft, nodes);
-    std::string base = prepare_logging();
-    std::cout << base << "best cost = " << minTotalCost << std::endl;
-  #endif
-
-  return best_schedule;
-}
-
-void
-Heuristic::algorithm (unsigned v)
-{
-  #ifdef SMALL_SYSTEM
-    // change verbosity level
-    verbose = v;
-  #endif
-
-  // intialization
-  unsigned iter = 0;
-  double first_finish_time = INF;
-  bool all_completed = false;
-  bool stop = false;
-  
-  while (!stop)
   {
-    #ifdef SMALL_SYSTEM
-      std::cout << "\n######################## ITER " << iter 
-                << " ########################\n" << std::endl;
-    #endif
+    if (! K_best.empty())
+      std::cout << base <<"\tcurrent optimal cost: " << K_best.cbegin()->first 
+                <<"; ";
+    else
+      std::cout << base << "\t";
+    std::cout << "new proposed cost: " << new_total_cost << std::endl;
+  }
 
-    // add new job to the queue
-    double elapsed_time = std::min(
-                                scheduling_interval,
-                                first_finish_time
-                              );
-    double next_submission_time = submit_job(elapsed_time);
-
-    // compute elapsed time between current and previous iteration
-    elapsed_time = std::min(
-                          elapsed_time,
-                          next_submission_time - current_time
-                        );
+  // check if current solution is one of the best schedules
+  typename K_best_t::iterator ub = K_best.upper_bound(new_total_cost);
+  if (to_be_inserted(K_best, ub))
+  {
+    // insert the new solution in the map
+    K_best.insert(ub, std::pair<double,Solution>(new_total_cost, BS));
 
     if (verbose > 1)
-      std::cout << "current_time = " << current_time
-                << "; first_finish_time = " << first_finish_time
-                << "; next_submission_time = " << next_submission_time
-                << "; elapsed_time = " << elapsed_time << std::endl;
+      std::cout << base << "\t\t---> INSERTED";
 
-    // update scheduled_jobs to compute execution costs
-    if (iter > 0)
+    // if the number of elite solutions exceeds the maximum value K, restore 
+    // the map size
+    if (K_best.size() > K)
     {
-      all_completed = update_scheduled_jobs(iter, elapsed_time);
-      // if there is a gap between the completion of the last job and the
-      // submission of the new one, force the submission of a new job
-      if (all_completed && (next_submission_time < INF))
-      {
-        elapsed_time = submit_job(INF) - current_time;
-        if (verbose > 1)
-          std::cout << "\tnew elapsed_time = " << elapsed_time << std::endl;
-      }
-    }
-    
-    // check stopping cryterion
-    stop = (next_submission_time == INF) && all_completed;
-
-    if (!stop)
-    {
-      // close all currently opened nodes
-      close_nodes();
-
-      // update current_time according to the elapsed time between current 
-      // and previous iteration
-      current_time += elapsed_time;
+      restore_map_size(K_best);
 
       if (verbose > 1)
-        std::cout << "\t new current_time = " << current_time 
-                  << "\n" << std::endl;
-
-      if (iter > 0)
-      {
-        // remove ended jobs from the queue
-        remove_ended_jobs();
-        // update execution time of jobs that have been partially executed
-        update_execution_times(iter, elapsed_time);
-      }
-
-      // determine the best schedule
-      job_schedule_t best_schedule = perform_scheduling();
-      
-      // add the best schedule to scheduled_jobs
-      scheduled_jobs.push_back(best_schedule);
-
-      // find execution time of first ending job
-      first_finish_time = find_first_finish_time(scheduled_jobs[iter]);
-      iter++;
+        std::cout << base << " ---> REMOVED LAST ELEMENT";
     }
   }
+  if (verbose > 1)
+      std::cout << std::endl;
 }
 
+template <typename COMP>
 void
-Heuristic::algorithm (unsigned v, unsigned myseed, unsigned mri)
+Heuristic<COMP>::init (const System& s, const obj_function_t& pf)
 {
-  // set seed for random number generation and maximum number of iterations
-  generator.seed(myseed);
-  max_random_iter = mri;
-
-  algorithm(v);
+  system = s;
+  proxy_function = pf;
 }
 
-void
-Heuristic::print_data (void) const
-{
-  print_container(jobs, directory + "jobs_list.csv");
-  print_map(ttime, directory + "ttime.csv");
-  print_container(nodes, directory + "nodes.csv");
-}
 
-void
-Heuristic::print_schedule (const std::string& filename) const
-{
-  #ifdef SMALL_SYSTEM
-    print_result(scheduled_jobs, nodes, directory + filename);
-  #else
-    std::ofstream ofs(directory + "all_costs.csv", std::ios_base::app);
-    ofs << filename << ", " << total_tardi << ", "
-        << total_tardi_cost << ", " << total_vm_cost << ", "
-        << (total_vm_cost+total_tardi_cost) << std::endl;
-  #endif
-}
+/*
+*   specializations of template classes
+*/
+template class Heuristic<std::less<double>>;
+template class Heuristic<std::greater<double>>;

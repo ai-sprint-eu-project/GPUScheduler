@@ -1,19 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Copyright 2020-2021 Federica Filippini
+Created on Tue Aug  4 12:23:21 2020
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+@author: federicafilippini
 """
 
 
@@ -63,9 +53,9 @@ def plot_nodes_and_jobs (all_data, all_methods, nN, title = "", path = ""):
         for iterate in data.groupby(["n_iterate"]):
             temp = pd.DataFrame()
             temp["sim_time"] = [iterate[1]["sim_time"].iloc[0] / 3600]
-            temp["n_nodes"] = [len(iterate[1]["Nodes"].dropna().unique())]
+            temp["n_nodes"] = [len(iterate[1]["node_ID"].dropna().unique())]
             temp["n_jobs"] = [len(iterate[1])]
-            temp["n_running_jobs"] = [iterate[1]["Nodes"].count()]
+            temp["n_running_jobs"] = [iterate[1]["node_ID"].count()]
             temp["nN"] = [nN]
             nNJ = nNJ.append(temp, ignore_index=True)
         nNJ.plot(x = "sim_time", y = "n_nodes", linestyle = "solid", 
@@ -80,15 +70,15 @@ def plot_nodes_and_jobs (all_data, all_methods, nN, title = "", path = ""):
     
     handles,labels = axN.get_legend_handles_labels()
     axN.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5))
-    #figN.xlabel("Simulation time [h]")
-    #figN.ylabel("Number of nodes")
-    #figN.title(title)
+    axN.set_xlabel("Simulation time [h]")
+    axN.set_ylabel("Number of nodes")
+    axN.set_title(title)
     
     handles,labels = axJ.get_legend_handles_labels()
     axJ.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5))
-    #figJ.xlabel("Simulation time [h]")
-    #figJ.ylabel("Number of nodes")
-    #figJ.title(title)
+    axJ.set_xlabel("Simulation time [h]")
+    axJ.set_ylabel("Number of nodes")
+    axJ.set_title(title)
     
     if path != "":
         figN.savefig(fig_folder1 + "/" + title + ".pdf", format='pdf', 
@@ -135,7 +125,7 @@ def main():
     # read data
     all_data = {}
     for file in os.listdir(args.results_directory):
-        if file.startswith("cost-") or file.startswith("tardi"):
+        if file.startswith("all"):
             continue
         tokens = file.split("_")
         method = tokens[0]

@@ -1,0 +1,42 @@
+1) Boost is needed, specify its directory in build/Makefile
+on BOOST_INC_PATH and BOOST_LIB_PATH
+
+2) Install restc-cpp: https://github.com/jgaa/restc-cpp
+
+git clone git@github.com:jgaa/restc-cpp.git
+cd restc-cpp/
+mkdir dbuild
+cd dbuild
+cmake ..
+make
+
+If you get error on BOOST not found add to line 228 of CMakeLists.txt
+the following command with the BOOST directory:
+set(BOOST_ROOT ...)
+
+Specify the restc-cpp root in build/Makefile on ROOT_RESTC
+
+3) Install Pyomo (http://www.pyomo.org/installation) 
+and Ipopt (https://coin-or.github.io/Ipopt/INSTALL.html)
+Using conda:
+
+conda install -c conda-forge pyomo
+conda install -c conda-forge pyomo.extras
+conda install -c conda-forge ipopt
+
+Note that if ipopt is not installed with conda it may be necessary to set
+its directory in line 88 of stochastic.py: pyo.SolverFactory('.../ipopt')
+
+4) Python dependencies
+- flask 
+(latest version needed, otherwise throw error on route instead of get/put)
+- waitress
+- numpy
+- pandas
+
+5) Modify main path on script/py/run_experiment.sh
+
+
+6) To select a port different from 5000 modify:
+	1) stochastic.py, line 207: serve(app, port=XXXX)
+	2) stochastic.cpp, line 123: std::string url = "http://127:0:0:1:XXXX/solution";

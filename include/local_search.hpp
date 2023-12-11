@@ -1,213 +1,96 @@
-// Copyright 2020-2021 Federica Filippini
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 #ifndef LOCAL_SEARCH_HH
 #define LOCAL_SEARCH_HH
 
-#include "random_greedy.hpp"
+#include "elite_solutions.hpp"
+#include "system.hpp"
 
-class Local_search: public Random_greedy {
+class Local_search {
 
-protected:
+private:
   // type definitions
   typedef std::list<job_schedule_t::const_iterator> sorted_jobs_t;
-  typedef std::vector<std::list<job_schedule_t::const_iterator>> nodes_map_t;
+  typedef std::map<std::string, sorted_jobs_t> node_jobs_t;
   typedef std::pair<double,job_schedule_t> best_change_t;
 
-  // maximum number of best solutions to be saved
-  unsigned K = 10;
+  // system
+  System system;
+
+  // proxy function
+  obj_function_t proxy_function;
 
   // maximum size of neighborhoods
   unsigned k1 = 10;
 
-  // number of iterations of local search (1 corresponds to a first-improving
-  // strategy)
-  unsigned max_ls_iter = 10;
+  // costs comparator
+  comparator_t comparator;
 
-  /* compare_costs
-  *  compare the costs passed as parameters
-  *
-  *  Input:   double                total cost
-  *           double                new proposed cost
-  *           double                current optimal cost
-  *
-  *  Output:  bool                  true if the new proposed cost is the best
-  *                                 among the three costs
-  *
-  */
-  bool compare_costs (double, double, double) const;
+  // verbosity level
+  unsigned verbose = 0;
+  unsigned level = 3;
 
-  /* perform_scheduling
-  *   performs the scheduling process that assigns the best configuration to
-  *   each submitted jobs (as long as resources are available)
+  /* select_setup
+  *   select a setup for the given job with the given GPU type and GPU number
   *
-  *   Output: job_schedule_t        proposed schedule
-  */
-  virtual job_schedule_t perform_scheduling (void) override;
-
-  /* objective_function
-  *   evaluate objective function of the current schedule
+  *   Input:  const Job&                    job to be assigned
+  *           const std::string&            GPU type
+  *           unsigned                      required number of GPUs
   *
-  *   Input:  job_schedule_t&             new proposed schedule
-  *           double                      elapsed time between previous and 
-  *                                       current iteration
-  *           const std::vector<Node>&    vector of open nodes
-  *
-  *   Output: double              total cost of the proposed schedule
+  *   Output: setup_time_t::const_iterator  iterator to the new setup
   */
-  virtual double objective_function (job_schedule_t&, double,
-                                     const std::vector<Node>&) override;
-
-  /* restore_map_size
-  *  erase the element in the map with the worst cost (the first element), so 
-  *  that the size of the map returns less than or equal to the maximum size K
-  *
-  *  Input:     K_best_t&           map to be modified
-  */
-  virtual void restore_map_size (K_best_t&) override;
-
-  /* to_be_inserted
-  *  return true if the element characterized by the given upper bound should
-  *  be inserted in the map
-  */
-  virtual bool to_be_inserted (const K_best_t&, K_best_t::iterator) const override;
+  setup_time_t::const_iterator select_setup (const Job&, const std::string&,
+                                             unsigned) const;
 
   /* get_sorted_jobs
-  *   analyses the solution passed as parameter to generate the list of 
+  *   analyse the solution passed as parameter to generate the list of 
   *   jobs sorted by decreasing tardiness, the list of jobs sorted by 
   *   decreasing VM cost and a table storing the list of jobs running on 
   *   each node
   *
-  *   Input:  const Best_solution&            solution to be examined
-  *           sorted_jobs_t&                  list of jobs sorted by tardiness
-  *           sorted_jobs_t&                  list of jobs sorted by cost
-  *           std::vector<sorted_jobs_t>&     map of jobs per node
+  *   Input:  const Solution&               solution to be examined
+  *           sorted_jobs_t&                list of jobs sorted by tardiness
+  *           sorted_jobs_t&                list of jobs sorted by cost
+  *           node_jobs_t&                  map of jobs in each node
   */
-  void get_sorted_jobs (const Best_solution&, sorted_jobs_t&,
-                        sorted_jobs_t&, std::vector<sorted_jobs_t>&) const;
-
-  /* local_search
-  *   perform the local search, updating the map of best solutions with the
-  *   new candidates
-  */
-  void local_search (void);
+  void get_sorted_jobs (const Solution&, sorted_jobs_t&,
+                        sorted_jobs_t&, node_jobs_t&) const;
 
   /* first_neighborhood
   *   jobs executed on different nodes, high tardiness VS high vm cost
   *
-  *   Input:  const sorted_jobs_t&            list of jobs sorted by tardi
-  *           const sorted_jobs_t&            list of jobs sorted by cost
-  *           const Best_solution&            original best solution
-  *           double                          original total cost
+  *   Input:  const sorted_jobs_t&          list of jobs sorted by tardiness
+  *           const sorted_jobs_t&          list of jobs sorted by cost
+  *           const Solution&               original solution
+  *           double                        original total cost
   *
-  *   Output: best_change_t                   proposed modification with new 
-  *                                           total cost
+  *   Output: best_change_t                 proposed modification with new 
+  *                                         total cost
   */
   best_change_t first_neighborhood (const sorted_jobs_t&, const sorted_jobs_t&, 
-                                    const Best_solution&, double);
+                                    const Solution&, double);
 
   /* second_neighborhood
   *   jobs executed on different nodes, high tardiness VS low pressure
   *
-  *   Input:  const sorted_jobs_t&            list of jobs sorted by tardi
-  *           const Best_solution&            original best solution
-  *           double                          original total cost
+  *   Input:  const sorted_jobs_t&          list of jobs sorted by tardi
+  *           const Solution&               original solution
+  *           double                        original total cost
   *
-  *   Output: best_change_t                   proposed modification with new 
-  *                                           total cost
+  *   Output: best_change_t                 proposed modification with new 
+  *                                         total cost
   */
-  best_change_t second_neighborhood (const sorted_jobs_t&,const Best_solution&,
+  best_change_t second_neighborhood (const sorted_jobs_t&, const Solution&,
                                      double);
 
   /* third_neighborhood
   *   executed job (high tardiness) VS postponed job (high pressure)
   *
-  *   Input:  const Best_solution&            original best solution
-  *           double                          original total cost
+  *   Input:  const Solution&                   original solution
+  *           double                            original total cost
   *
-  *   Output: best_change_t                   proposed modification with new 
-  *                                           total cost
+  *   Output: best_change_t                     proposed modification with new 
+  *                                             total cost
   */
-  best_change_t third_neighborhood (const Best_solution&, double);
-
-  /* fourth_neighborhood
-  *   nodes with jobs with highest tardiness --> more powerful setup
-  *
-  *   Input:  const sorted_jobs_t&            list of jobs sorted by tardiness
-  *           const job_schedule_t&           original schedule
-  *           const std::vector<Node>&        vector of open nodes (to be 
-  *                                           modified)
-  *           double                          original total cost
-  *           std::vector<sorted_jobs_t>&     map of jobs per node
-  *
-  *   Output: best_change_t                   proposed modification with new 
-  *                                           total cost
-  */
-  best_change_t fourth_neighborhood (const sorted_jobs_t&,const job_schedule_t&,
-                                     std::vector<Node>&, double,
-                                     const std::vector<sorted_jobs_t>&);
-
-  /* fifth_neighborhood
-  *   nodes with jobs with highest tardiness --> double number of GPUs
-  *
-  *   Input:  const sorted_jobs_t&            list of jobs sorted by tardiness
-  *           const job_schedule_t&           original schedule
-  *           const std::vector<Node>&        vector of open nodes (to be 
-  *                                           modified)
-  *           double                          original total cost
-  *           std::vector<sorted_jobs_t>&     map of jobs per node
-  *
-  *   Output: best_change_t                   proposed modification with new 
-  *                                           total cost
-  */
-  best_change_t fifth_neighborhood (const sorted_jobs_t&,const job_schedule_t&, 
-                                    std::vector<Node>&, double,
-                                    const std::vector<sorted_jobs_t>&);
-
-  /* sixth_neighborhood
-  *   nodes with jobs with highest tardiness --> half number of GPUs
-  *
-  *   Input:  const sorted_jobs_t&            list of jobs sorted by tardiness
-  *           const job_schedule_t&           original schedule
-  *           const std::vector<Node>&        vector of open nodes (to be 
-  *                                           modified)
-  *           double                          original total cost
-  *           std::vector<sorted_jobs_t>&     map of jobs per node
-  *
-  *   Output: best_change_t                   proposed modification with new 
-  *                                           total cost
-  */
-  best_change_t sixth_neighborhood (const sorted_jobs_t&,const job_schedule_t&, 
-                                    std::vector<Node>&, double,
-                                    const std::vector<sorted_jobs_t>&);
-
-  /* seventh_neighborhood
-  *
-  *
-  *   Input:  const sorted_jobs_t&            list of jobs sorted by tardiness
-  *           const job_schedule_t&           original schedule
-  *           const std::vector<Node>&        vector of open nodes (to be 
-  *                                           modified)
-  *           double                          original total cost
-  *           std::vector<sorted_jobs_t>&     map of jobs per node
-  *
-  *   Output: best_change_t                   proposed modification with new 
-  *                                           total cost
-  */
-  best_change_t seventh_neighborhood (const sorted_jobs_t&,
-                                      const job_schedule_t&, 
-                                      std::vector<Node>&, 
-                                      double,
-                                      const std::vector<sorted_jobs_t>&);
+  best_change_t third_neighborhood (const Solution&, double);
 
   /* swap_running_jobs
   *   swap schedules of jobs passed as parameter and evaluate the modified 
@@ -217,49 +100,51 @@ protected:
   *           const Job&                        second job to be swapped
   *           const Schedule&                   schedule of first job
   *           const Schedule&                   schedule of second job
-  *           const job_schedule_t&             original schedule
-  *           const std::vector<Node>&          original vector of open nodes
-  *           double                            original total cost
+  *           const Solution&                   original solution
   *           best_change_t&                    best change (to be updated)
   *
   *   Output: bool                              true if best change has been
   *                                             updated
   */
   bool swap_running_jobs (const Job&, const Job&, const Schedule&, 
-                          const Schedule&, const job_schedule_t&, 
-                          const std::vector<Node>&, double, best_change_t&);
+                          const Schedule&, const Solution&, best_change_t&);
 
-  /* cfr_costs
-  *   compute the cost of the original and modified schedule, updating the best 
-  *   change in case of better cost
+  /* restore_map_size
+  *   erase the element in the map with the worst cost until the size  
+  *   of the map returns less than or equal to the maximum size K
   *
-  *   Input:  double                            original total cost
-  *           job_schedule_t&                   original schedule
-  *           job_schedule_t&                   modified schedule
-  *           const std::vector<Node>&          modified vector of open nodes
-  *           best_change_t&                    best change (to be updated)
-  *
-  *   Output: bool                              true if best change has been
-  *                                             updated
+  *   Input:  std::map<double, Solution, COMP>&   map to be modified
+  *           unsigned                            maximum number of solutions
   */
-  bool cfr_costs (double, const job_schedule_t&, job_schedule_t&,
-                  const std::vector<Node>&, best_change_t&);
+  template<typename COMP>
+  void restore_map_size (std::map<double, Solution, COMP>&, unsigned);
+
+  /* local_search_step
+  *   perform a single step of local search
+  *
+  *   Input:  std::map<double, Solution, COMP>&   map to be modified
+  */
+  template<typename COMP>
+  void local_search_step (std::map<double, Solution, COMP>&);
 
 public:
-  /*  constructor
+  /* constructor
   *
-  *   Input:  const std::string&    full path of data directory
-  *           const std::string&    name of file with the list of jobs
-  *           const std::string&    name of file with execution times of jobs
-  *           const std::string&    name of file with the list of nodes
-  *
+  *   Input:  const System&                     system
+  *           const obj_function_t&             proxy function
   */
-  Local_search (const std::string&, const std::string&, const std::string&, 
-                const std::string&);
+  Local_search (const System&, const obj_function_t&);
 
-  /* destructor
+  /* local_search
+  *   perform the local search
+  *
+  *   Input:  Elite_solutions<COMP>&            elite solutions
+  *           unsigned                          number of iterations
+  *                                             (default 1 -> first-improving)
+  *           unsigned                          verbosity level (default 0)
   */
-  virtual ~Local_search (void) = default;
+  template<typename COMP>
+  void local_search (Elite_solutions<COMP>&, unsigned = 1, unsigned = 0);
 
 };
 

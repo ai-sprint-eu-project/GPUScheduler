@@ -1,0 +1,5 @@
+GPUtype,Memory,GPUf,inflate_max,inflate
+K80,6,0.25,1.11,1
+K80,12,0.5,1.05,1
+M60,4,0.25,1.11,1
+M60,8,0.5,1.05,1

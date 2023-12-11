@@ -1,15 +1,3 @@
-// Copyright 2020-2021 Federica Filippini
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//     http://www.apache.org/licenses/LICENSE-2.0
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 #ifndef UTILITIES_HH
 #define UTILITIES_HH
 
@@ -18,46 +6,89 @@
 #include <vector>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 #include <limits>
 #include <cassert>
 #include <random>
+#include <functional>
+#include <iostream>
+#include <iomanip>
+#include <memory>
 
 /*  
-    forward declarations of classes
+  forward declarations of classes
 */
 class Job;
-class Setup;
 class Node;
 class Schedule;
+class Solution;
+class GPU_catalogue;
 
 /*
-    type definitions
+  type definitions
 */
 typedef std::vector<std::string> row_t;
-typedef std::list<row_t> table_t;
 
-typedef std::unordered_multimap<Setup, double> setup_time_t;
+// <GPUtype, nGPUs, GPUf>
+typedef std::tuple<std::string, unsigned, double> setup_t;
+// <setup_t, time>
+typedef std::map<setup_t, double> setup_time_t;
+// <jobID, setup_time_t>
 typedef std::unordered_map<std::string, setup_time_t> time_table_t;
+typedef std::shared_ptr<const time_table_t> time_table_ptr;
 
 typedef std::unordered_map<Job, Schedule> job_schedule_t;
 
+typedef std::list<Node> nodes_t;
+// <GPUtype, nodes_t>
+typedef std::unordered_map<std::string, nodes_t> nodes_map_t;
+
+// <available fraction, node ID, GPU ID>
+typedef std::tuple<double, std::string, unsigned> gpu_t;
+typedef std::list<gpu_t> gpus_t;
+// <GPUtype, gpus_t>
+typedef std::unordered_map<std::string, gpus_t> gpus_map_t;
+// <Node ID, number of shared GPUs>
+typedef std::unordered_map<std::string, unsigned> shared_counter_t;
+
+// <GPUtype, vector<costs>>
+typedef std::unordered_map<std::string, std::vector<double>> catalogue_t;
+typedef std::shared_ptr<const GPU_catalogue> gpu_catalogue_ptr;
+
+typedef std::function<double (Solution&, const gpu_catalogue_ptr&, 
+                              unsigned, unsigned)> obj_function_t;
+typedef std::function<bool (double, double)> comparator_t;
+
+typedef std::pair<Job, Node> jn_pair_t;
+typedef std::list<jn_pair_t> jn_pairs_t;
+
+struct costs_struct {
+  double total_tardi = 0.;
+  double total_tardiCost = 0.;
+  double total_nodeCost = 0.;
+  double total_GPUcost = 0.;
+  double total_energyCost = 0.;
+  double total_cost = 0.;
+};
+
 /*
-    constant expressions
+  constant expressions
 */
 static constexpr double INF = std::numeric_limits<double>::infinity();
+static constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
 static constexpr double TOL = 1e-7;
 
 /*
-    template function for random selection
+  template function for random selection
 
-    selects an element of type VAL from a container CONT<KEY,VAL>
-    (e.g. std::multimap<unsigned, unsigned>)
+  selects an element of type VAL from a container CONT<KEY,VAL>
+  (e.g. std::multimap<unsigned, unsigned>)
 
-    Input:    CONT<KEY,VAL,Ts...>&            the container to be inspected
-              std::default_random_engine&     random numbers generator
-              double                          parameter for random selection
+  Input:    CONT<KEY,VAL,Ts...>&            the container to be inspected
+            std::default_random_engine&     random numbers generator
+            double                          parameter for random selection
 
-    Output:   VAL                             the element that has been selected
+  Output:   VAL                             the element that has been selected
 */
 template <template <typename...> class CONT, typename KEY, typename VAL, typename ... Ts>
 VAL
